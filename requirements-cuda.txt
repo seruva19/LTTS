@@ -1,0 +1,12 @@
+# CUDA 12.8 builds of the PyTorch stack. Install these INSTEAD of the plain
+# torch pins in requirements.txt when you have an NVIDIA GPU:
+#
+#     pip install -r requirements-cuda.txt
+#     pip install -r requirements.txt
+#
+# The second command is a no-op for torch because the CUDA wheels above already
+# satisfy the version pins.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+torchaudio==2.8.0+cu128

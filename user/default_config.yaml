@@ -1,0 +1,191 @@
+# LTTS Default Configuration
+# This file contains all default settings for the LTTS application
+# User-specific overrides should be placed in config.yaml
+
+# Core Engine Settings
+llm_engine: transformers
+autoload_blueprint: false
+load_last_blueprint_on_launch: false
+
+# Storage Settings
+storage:
+  save_location: localStorage  # localStorage or disk
+  auto_save_settings: true
+  settings_file_path: user/config.user.yaml
+
+# User Interface Settings
+ui:
+  theme: auto  # auto, light, dark
+  compact_mode: false
+  show_layer_details: true
+  auto_expand_layers: false
+  show_parameters: true
+  show_modules: true
+  show_token_ids: false
+  highlight_threshold: 0.1
+  color_scheme: viridis
+
+# Performance Settings
+performance:
+  max_concurrent_models: 3
+  enable_gpu: true
+  memory_limit: 8192  # MB
+  cache_size: 1024    # MB
+  data_retention_minutes: 60
+
+# Model Loading Settings
+model_loading:
+  low_cpu_mem_usage: true
+
+# Visualization Settings
+visualization:
+  default_attention_view: heatmap  # heatmap, graph, matrix
+  default_visualization_type: attention_heatmap
+  similarity_metric: cosine  # cosine, dot, euclidean
+  show_all_heads: false
+  layer_index: -1  # -1 for current layer
+  head_index: -1   # -1 for all heads average
+
+# API Settings
+api:
+  server_url: http://localhost:8000
+  timeout: 30000      # milliseconds
+  retry_attempts: 3
+
+# Display Settings
+display:
+  show_parameter_counts: true
+  show_module_indicators: true
+  compact_mode: false
+  section_visibility:
+    attention: true
+    embeddings: true
+    mlp: true
+    normalization: true
+    output: true
+
+# Control Settings
+controls:
+  show_jump_buttons: true
+  auto_scroll_to_selection: true
+  highlight_selected_category: true
+
+# Module Settings
+modules:
+  auto_load_modules: true
+  enable_websocket_updates: true
+  data_retention_minutes: 60
+  # Where to find the LTTS-modules registry. Leave empty to let LTTS resolve
+  # it: LTTS_MODULES_REGISTRY, then a sibling ../LTTS-modules checkout,
+  # then the published registry on GitHub. Set it to pin your own.
+  registry_url: ''
+
+  # Layer Inspector Module
+  layer_inspector:
+    extract_shapes: true
+    extract_dtypes: true
+    extract_memory_usage: true
+    extract_activation_stats: true
+    extract_gradients: false
+    extract_device_info: true
+
+  # Attention Visualizer Module
+  attn_visualizer:
+    visualization_type: attention_heatmap
+    head_index: -1
+    layer_index: -1
+    similarity_metric: cosine
+
+  # Logit Lens Module
+  logit_lens:
+    top_k: 5
+    position: -1
+    apply_final_norm: true
+    emit_table: true
+    emit_probability_chart: true
+
+  # Activation Trajectory Module
+  activation_trajectory:
+    position: -1
+    emit_scalar: true
+    emit_chart: true
+
+  # Attention Rollout Module
+  attention_rollout:
+    head_fusion: mean
+    add_residual: true
+    emit_heatmap: true
+    emit_top_sources_table: true
+    top_k: 5
+
+  # Representation Similarity Module
+  representation_similarity:
+    max_positions: 64
+    emit_heatmap: true
+    emit_scalar: false
+
+  # Induction Head Detector Module
+  induction_head_detector:
+    emit_table: true
+    emit_chart: false
+    min_seq_len: 4
+
+  # Attention Entropy Profiler Module
+  attention_entropy_profiler:
+    emit_scalar: true
+    emit_table: false
+    emit_chart: true
+
+  # Direct Logit Attribution Module
+  direct_logit_attribution:
+    apply_final_norm: true
+    emit_chart: true
+    emit_table: false
+
+  # Embedding Projector Module
+  embedding_projector:
+    target_layer_index: -1
+    method: pca
+    emit_image: true
+
+  # Occlusion Attribution Module
+  occlusion_attribution:
+    max_positions: 64
+
+  # Neuron Ablation Module (intervention — off by default)
+  neuron_ablation:
+    enabled: false
+    ablation_mode: zero
+    positions: all
+    emit_summary: true
+
+  # Activation Patching Module (intervention — off by default)
+  activation_patching:
+    mode: "off"
+    positions: last
+    emit_summary: true
+
+  # SAE Features Module (requires sae_lens in the module venv)
+  sae_features:
+    enabled: false
+    sae_release: gpt2-small-res-jb
+    sae_id: blocks.5.hook_resid_pre
+    top_k_features: 10
+    position: last
+    emit_table: true
+    emit_scalar: false
+
+  # Interpretability Manager Module
+  interpretability_manager:
+    auto_load_modules: true
+    enable_websocket_updates: true
+    data_retention_minutes: 60
+
+# Blueprint Settings
+blueprint:
+  auto_save_on_changes: true
+  autoload_blueprint: false
+  load_last_blueprint_on_launch: false
+  default_blueprint_name: "Untitled Blueprint"
+  save_location: localStorage  # localStorage or disk
+  blueprints_folder: blueprints/

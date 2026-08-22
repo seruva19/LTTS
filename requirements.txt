@@ -1,0 +1,21 @@
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+transformers==4.56.0
+matplotlib==3.10.6
+seaborn==0.13.2
+accelerate==1.10.1
+fastapi==0.116.1
+starlette>=0.40,<0.47
+fastapi-cors==0.0.6
+uvicorn==0.35.0
+websockets==15.0.1
+pydantic==2.11.7
+huggingface-hub==0.34.4
+PyYAML>=6.0,<7
+requests>=2.31,<3
+# Required by the shipped specialist modules. Keeping these in the primary
+# lockstep install prevents sae_features/model_control_vector from silently
+# degrading after a fresh clone or Docker build.
+sae_lens==6.47.0
+repeng==0.4.0

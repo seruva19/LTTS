@@ -1,0 +1,50 @@
+# Editors / IDEs
+.vscode
+.idea
+.cursor
+.claude
+.agents
+.qodo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Node / frontend build
+node_modules
+dist
+coverage
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+/venv
+/.venv
+
+# LTTS runtime data (generated locally, never published)
+/blueprints
+/keys
+/models
+/.ltts_cache
+
+# Module source lives in the sibling LTTS-modules repository and is loaded
+# from there. This directory only appears when a module is installed through
+# the API; it is never source. See README "Modules".
+/ltts_modules
+
+# Per-user config written by the app on first start; the shipped templates
+# are user/default_config.yaml and user/default_models.yaml.
+user/*.user.yaml
+
+# Local environment / editor overrides
+.env
+.env.local
+pyrightconfig.local.json
+
+# Internal dev notes (kept locally, not published)
+/.ai/
+LAYER_PROGRESS_IMPLEMENTATION.md
+PROPER_ASYNC_LAYER_PROGRESS.md

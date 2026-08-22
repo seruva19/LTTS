@@ -1,0 +1,31 @@
+# Default model registry (ships with LTTS).
+# On first start this is copied to user/models.user.yaml (gitignored) —
+# edit that copy to add your local / HuggingFace models.
+models:
+  local/DEBUG:
+    id: debug/dummy
+    data: {}
+  HuggingFaceTB/SmolLM-135M:
+    id: HuggingFaceTB/SmolLM-135M
+    data: {}
+  meta-llama/Llama-3.2-1B:
+    id: meta-llama/Llama-3.2-1B
+    data: {}
+  Qwen/Qwen3-4B:
+    id: Qwen/Qwen3-4B
+    data: {}
+
+  # One small checkpoint per supported topology, so the encoder-only and
+  # encoder-decoder paths described in the README are reachable out of the box.
+  gpt2:
+    id: gpt2
+    data:
+      task: causal_lm
+  google-bert/bert-base-uncased:
+    id: google-bert/bert-base-uncased
+    data:
+      task: masked_lm
+  google-t5/t5-small:
+    id: google-t5/t5-small
+    data:
+      task: seq2seq_lm

@@ -1,0 +1,34 @@
+{
+  "name": "ltts",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev-server": "uvicorn ltts:app --reload",
+    "dev-client": "vite",
+    "dev": "concurrently \"npm run dev-server\" \"npm run dev-client\"",
+    "build-client": "vite build",
+    "preview": "vite preview",
+    "test:unit": "vitest"
+  },
+  "dependencies": {
+    "@svgdotjs/svg.js": "^3.2.4",
+    "axios": "^1.7.7",
+    "html2canvas": "^1.4.1",
+    "pinia": "^2.1.7",
+    "uuidjs": "^5.1.0",
+    "vue": "^3.4.29",
+    "vue-toastification": "^2.0.0-rc.5",
+    "vuestic-ui": "^1.9.12"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitejs/plugin-vue-jsx": "^5.1.6",
+    "@vue/test-utils": "^2.4.11",
+    "concurrently": "^10.0.5",
+    "jsdom": "^30.0.1",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}

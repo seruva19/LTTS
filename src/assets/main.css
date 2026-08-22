@@ -1,0 +1,49 @@
+body {
+  overflow-y: hidden;
+}
+
+.menu-content {
+  z-index: 99999 !important;
+  margin-top: 5px;
+}
+
+.menu-content.blueprints {
+  margin-left: 5px;
+}
+
+.menu-content.models {
+  margin-left: 77px;
+}
+
+.menu-content.modules {
+  margin-left: 74px;
+}
+
+.menu-content.view {
+  margin-left: 85px;
+}
+
+.menu-content.run {
+  margin-left: 88px;
+}
+
+.va-dropdown__content.va-select-dropdown__content {
+  z-index: 99999 !important;
+}
+
+.va-dropdown__content-wrapper {
+  z-index: 99999 !important;
+}
+
+.menu-content.settings {
+  margin-left: 73px;
+}
+
+.modal-window {
+  z-index: 10000 !important;
+}
+
+.va-menu-item:hover {
+  background-color: var(--va-focus) !important;
+  color: var(--va-text-inverted) !important;
+}

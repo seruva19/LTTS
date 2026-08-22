@@ -1,0 +1,130 @@
+.modules-section {
+  border-top: 1px solid var(--va-background-border);
+  padding-top: 1rem;
+}
+
+.modules-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.modules-header h4 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--va-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.module-group {
+  margin-bottom: 1rem;
+}
+
+.module-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.module-type-badge {
+  font-size: 0.625rem;
+}
+
+.module-group-title {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--va-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.module-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background: var(--va-background-element);
+  border-radius: 8px;
+  border: 1px solid var(--va-background-border);
+}
+
+.module-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--va-text-primary);
+}
+
+.remove-module-btn {
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.remove-module-btn:hover {
+  opacity: 1;
+}
+
+.module-controls {
+  background: var(--va-background-element);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid var(--va-background-border);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.control-group {
+  margin-bottom: 1rem;
+}
+
+.control-group:last-child {
+  margin-bottom: 0;
+}
+
+.control-pre {
+  justify-self: start;
+}
+
+.control-post {
+  justify-self: end;
+  width: min(360px, 100%);
+}
+
+.control-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--va-text-secondary);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.module-select {
+  width: 100%;
+}
+
+.no-modules-attached {
+  padding: 0.5rem 0;
+}
+
+.no-modules-message {
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 768px) {
+  .module-controls {
+    grid-template-columns: 1fr;
+  }
+}

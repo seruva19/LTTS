@@ -1,0 +1,50 @@
+services:
+  ltts:
+    build:
+      context: .
+      additional_contexts:
+        ltts_modules: ../LTTS-modules
+    ports:
+      - "${LTTS_PORT:-8000}:8000"
+    volumes:
+      - ./user:/app/user
+      - ./models:/app/models
+    environment:
+      - LTTS_HOST=0.0.0.0
+      - LTTS_PORT=8000
+      - LTTS_LOG_LEVEL=${LTTS_LOG_LEVEL:-INFO}
+      - LTTS_ALLOWED_ORIGINS=${LTTS_ALLOWED_ORIGINS:-}
+      - LTTS_SKIP_MODULE_VENVS=1
+      - LTTS_MODULES_DIR=/opt/LTTS-modules
+      - HF_TOKEN=${HF_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Uncomment for GPU support:
+  # ltts-gpu:
+  #   build:
+  #     context: .
+  #     args:
+  #       USE_GPU: "true"
+  #   ports:
+  #     - "${LTTS_PORT:-8000}:8000"
+  #   volumes:
+  #     - ./user:/app/user
+  #     - ./models:/app/models
+  #   environment:
+  #     - LTTS_HOST=0.0.0.0
+  #     - LTTS_PORT=8000
+  #     - HF_TOKEN=${HF_TOKEN:-}
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
