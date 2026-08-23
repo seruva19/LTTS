@@ -100,6 +100,11 @@ def test_module_attachment_contracts_distinguish_architecture_roles():
         "mlp",
         "activation",
     }
+    assert module_target_roles("neuron_activation_steering") == {
+        "block",
+        "mlp",
+        "activation",
+    }
     assert module_target_roles("memory_monitor") == {"model"}
 
     contract = module_attachment_contract("sae_features")

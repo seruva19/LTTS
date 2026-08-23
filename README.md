@@ -1,16 +1,32 @@
 # Looks To The Sun
-> An experimental playground for inspecting transformer models.
-
-## Status
-
-LTTS is a research preview for local interpretability experiments. APIs and
-module contracts may change.
 
 ## About
 
-Looks To The Sun inspects transformer models during inference. It maps model
-structure, finds compatible module attachment points, and streams diagnostics
-to the UI.
+LTTS is an experimental playground for inspecting transformer models. It inspects transformer models during inference, maps model structure, finds compatible module attachment points, and streams diagnostics to the UI. Modules can also intervene in activations during inference to steer or change model outputs.
+
+## Status
+
+⚠️ LTTS is a research preview for local interpretability experiments. APIs and
+module contracts may change.
+
+## Engine API
+
+`ltts_engine` is the reusable, headless part of LTTS. It instruments a PyTorch
+transformer, attaches analysis or intervention modules, and returns ordinary
+Python outputs and artifacts without starting FastAPI, WebSockets, or the UI.
+
+```python
+from ltts_engine import HeadlessEngine, load_module
+
+module = load_module("../LTTS-modules/activation_anisotropy")
+with HeadlessEngine().instrument(model) as session:
+    session.attach(module, layer=session.layers("block")[0])
+    output = session.run(**model_inputs)
+    artifacts = session.artifacts
+```
+
+Install only the engine API from a checkout with `pip install .`. The LTTS
+application remains a consumer of the same instrumentation core.
 
 ## Modules
 
@@ -141,7 +157,7 @@ work. Paper and code links describe the underlying technique.
 - [ ] SVCCA / PWCCA representation comparison — [paper](https://arxiv.org/abs/1706.05806), [code](https://github.com/google/svcca)
 - [ ] Cross-model & cross-checkpoint representation alignment (Platonic) — [paper](https://arxiv.org/abs/2405.07987), [code](https://github.com/minyoungg/platonic-rep)
 - [x] Embedding-space visualization (PCA, t-SNE; UMAP planned) — [paper](https://arxiv.org/abs/1802.03426), [code](https://github.com/lmcinnes/umap)
-- [ ] Anisotropy / isotropy analysis of embeddings (Ethayarajh) — [paper](https://arxiv.org/abs/1909.00512)
+- [x] Anisotropy / isotropy analysis of embeddings (Ethayarajh) — [paper](https://arxiv.org/abs/1909.00512)
 - [ ] Intrinsic dimensionality & participation ratio (Ansuini et al.) — [paper](https://arxiv.org/abs/1905.12784), [code](https://github.com/ansuini/IntrinsicDimDeep)
 - [ ] Linear-representation-hypothesis tests (Park et al.) — [paper](https://arxiv.org/abs/2311.03658), [code](https://github.com/KihoPark/linear_rep_geometry)
 - [ ] Sparse probing (k-sparse probes for neuron-level feature localization) — [paper](https://arxiv.org/abs/2305.01610), [code](https://github.com/wesg52/sparse-probing-paper)
@@ -161,7 +177,7 @@ work. Paper and code links describe the underlying technique.
 - [ ] Polysemanticity & monosemanticity quantification — [paper](https://transformer-circuits.pub/2023/monosemantic-features/index.html)
 - [ ] Neuron superposition & feature-collision analysis — [paper](https://transformer-circuits.pub/2022/toy_model/index.html)
 - [ ] Automated neuron interpretation / captioning (Bills et al.) — [paper](https://openai.com/index/language-models-can-explain-neurons-in-language-models/), [code](https://github.com/openai/automated-interpretability)
-- [ ] Neuron activation steering / clamping — [paper](https://arxiv.org/abs/2308.10248)
+- [x] Neuron activation steering / clamping — [paper](https://arxiv.org/abs/2308.10248)
 - [ ] Massive activations, outlier dimensions & super weights — [massive activations](https://arxiv.org/abs/2402.17762), [super weight](https://arxiv.org/abs/2411.07191), [code](https://github.com/locuslab/massive-activations)
 - [ ] Layer-redundancy map (Block Influence, layer-skip validation) — [paper](https://arxiv.org/abs/2403.03853), [code](https://github.com/arcee-ai/PruneMe)
 

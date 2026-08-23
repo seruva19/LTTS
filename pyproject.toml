@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ltts-engine"
+version = "0.1.0"
+description = "Headless transformer instrumentation and intervention engine used by LTTS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = [
+  "torch>=2.4",
+  "transformers>=4.45",
+]
+
+[tool.setuptools.packages.find]
+include = ["ltts_engine*", "scripts*", "miners*"]
+exclude = ["tests*", "src*", "user*"]

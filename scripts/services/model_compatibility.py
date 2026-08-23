@@ -4,7 +4,6 @@ import inspect
 import importlib.util
 from typing import Any, Dict, Iterable, List, Optional, Set
 
-
 ATTENTION_MODULES = {
     "attention_entropy_profiler",
     "attention_head_grid",
@@ -15,7 +14,11 @@ ATTENTION_MODULES = {
 
 GRADIENT_MODULES = {"gradient_importance"}
 
-INTERVENTION_MODULES = {"neuron_ablation", "activation_patching"}
+INTERVENTION_MODULES = {
+    "neuron_ablation",
+    "neuron_activation_steering",
+    "activation_patching",
+}
 
 TOKENIZER_MODULES = {
     "contrastive_logit_difference",
@@ -82,6 +85,7 @@ BLOCK_STREAM_MODULES = {
 
 NEURON_MODULES = {
     "neuron_ablation",
+    "neuron_activation_steering",
     "neuron_activation_map",
     "neuron_tracker",
 }
@@ -202,7 +206,7 @@ def module_required_capabilities(
 
 
 def selected_module_requests(
-    modules: Optional[Dict[str, List[Any]]]
+    modules: Optional[Dict[str, List[Any]]],
 ) -> Dict[str, Set[str]]:
     """Normalize inference attachment input into module -> requested layers."""
     selected: Dict[str, Set[str]] = {}
@@ -277,7 +281,8 @@ def inspect_model_capabilities(ltts_model: Any) -> Dict[str, Dict[str, Any]]:
     eager_attention = bool(
         callable(getattr(model, "set_attn_implementation", None))
         or current_attention in {"eager", "eager_paged", "flex_attention"}
-        or config is not None and hasattr(config, "_attn_implementation")
+        or config is not None
+        and hasattr(config, "_attn_implementation")
     )
 
     tokenizer_decoding = bool(
@@ -287,9 +292,11 @@ def inspect_model_capabilities(ltts_model: Any) -> Dict[str, Dict[str, Any]]:
     capabilities = {
         "hidden_states": {
             "supported": hidden_states,
-            "detail": "Model forward accepts hidden-state output requests"
-            if hidden_states
-            else "Model does not expose hidden-state output controls",
+            "detail": (
+                "Model forward accepts hidden-state output requests"
+                if hidden_states
+                else "Model does not expose hidden-state output controls"
+            ),
         },
         "eager_attention": {
             "supported": eager_attention,
@@ -301,9 +308,11 @@ def inspect_model_capabilities(ltts_model: Any) -> Dict[str, Dict[str, Any]]:
         },
         "tokenizer_decoding": {
             "supported": tokenizer_decoding,
-            "detail": "Tokenizer decode is available"
-            if tokenizer_decoding
-            else "Tokenizer has not been attached or cannot decode",
+            "detail": (
+                "Tokenizer decode is available"
+                if tokenizer_decoding
+                else "Tokenizer has not been attached or cannot decode"
+            ),
         },
         "unembedding": {
             "supported": _has_unembedding(model),
@@ -443,7 +452,9 @@ def build_compatibility_report(
             }
         )
 
-    incompatible = [report["name"] for report in module_reports if not report["compatible"]]
+    incompatible = [
+        report["name"] for report in module_reports if not report["compatible"]
+    ]
     model = _unwrap_model(ltts_model)
     config = getattr(model, "config", None)
     return {

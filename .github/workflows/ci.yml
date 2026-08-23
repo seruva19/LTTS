@@ -23,6 +23,8 @@ jobs:
       # opt-in GPU path and is deliberately not installed here.
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
+      - name: Build reusable engine package
+        run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir "${{ runner.temp }}/ltts-engine-wheel"
       - name: Tests
         env:
           LTTS_SKIP_MODULE_VENVS: '1'
