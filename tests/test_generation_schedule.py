@@ -70,6 +70,38 @@ def _force_token_module(target_vector):
     return module
 
 
+def _position_probe_module():
+    module = ModuleType("generation_position_probe")
+    module.METADATA = {
+        "name": "generation_position_probe",
+        "event_types": ["layer_after"],
+    }
+
+    def interceptor(event):
+        event.reactor.signal(
+            "visualization",
+            {
+                "module": "generation_position_probe",
+                "subtype": "json",
+                "layer_path": event.context.module_path,
+                "data": {
+                    "step": event.context.generation_step,
+                    "token_positions": event.environment["token_positions"],
+                    "output_token_position": event.environment[
+                        "output_token_position"
+                    ],
+                    "attachment_schedule": event.environment[
+                        "attachment_schedule"
+                    ],
+                },
+            },
+        )
+        return {"status": "ok"}
+
+    module.interceptor = interceptor
+    return module
+
+
 def test_attachment_runs_only_on_selected_generation_step():
     model = _model()
     module = _probe_module()
@@ -148,3 +180,45 @@ def test_generation_runner_saves_schedules_and_changed_token_trajectories():
     assert trial.schedules[0]["schedule"] == {"generation_steps": [0, 1, 2]}
     assert trial.schedules[0]["module"] == "force_generation_token"
     assert trial.text == ("1 2 3 31 31 31",)
+
+
+def test_generation_schedules_select_input_and_output_token_positions():
+    model = _model()
+    module = _position_probe_module()
+    with HeadlessEngine().instrument(model) as session:
+        layer = session.layers("block")[0]
+        session.attach(module, layer=layer, schedule={"token_positions": [3]})
+        session.generate(
+            input_ids=torch.tensor([[1, 2, 3]]),
+            max_new_tokens=3,
+            do_sample=False,
+        )
+        input_position_artifacts = session.artifacts
+
+    assert len(input_position_artifacts) == 1
+    assert input_position_artifacts[0].data == {
+        "step": 1,
+        "token_positions": [3],
+        "output_token_position": 4,
+        "attachment_schedule": {"token_positions": [3]},
+    }
+
+    model = _model()
+    module = _position_probe_module()
+    with HeadlessEngine().instrument(model) as session:
+        session.attach(
+            module,
+            layer=session.layers("block")[0],
+            schedule={"output_token_positions": [3]},
+        )
+        session.generate(
+            input_ids=torch.tensor([[1, 2, 3]]),
+            max_new_tokens=2,
+            do_sample=False,
+        )
+        output_position_artifacts = session.artifacts
+
+    assert len(output_position_artifacts) == 1
+    assert output_position_artifacts[0].data["step"] == 0
+    assert output_position_artifacts[0].data["token_positions"] == [0, 1, 2]
+    assert output_position_artifacts[0].data["output_token_position"] == 3

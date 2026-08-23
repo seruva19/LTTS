@@ -96,6 +96,13 @@ class EventDispatcher:
                     context.generation_active
                 )
                 module_event.environment["generation_step"] = context.generation_step
+                module_event.environment["token_positions"] = list(
+                    context.token_positions
+                )
+                module_event.environment["output_token_position"] = (
+                    context.output_token_position
+                )
+                module_event.environment["attachment_schedule"] = dict(schedule)
 
                 before_signal_count = len(reactor.signals)
                 call_started = time.time()
@@ -340,7 +347,11 @@ class EventDispatcher:
             return True
         step = context.generation_step
         generation_only = bool(
-            schedule.get("generation_only", "generation_steps" in schedule)
+            schedule.get(
+                "generation_only",
+                "generation_steps" in schedule
+                or "output_token_positions" in schedule,
+            )
         )
         if generation_only and not context.generation_active:
             return False
@@ -356,6 +367,32 @@ class EventDispatcher:
                     return False
             except (TypeError, ValueError):
                 raise ValueError("generation_steps must contain integers")
+        configured_positions = schedule.get("token_positions")
+        if configured_positions is not None:
+            values = (
+                configured_positions
+                if isinstance(configured_positions, (list, tuple, set))
+                else [configured_positions]
+            )
+            try:
+                selected_positions = {int(value) for value in values}
+            except (TypeError, ValueError):
+                raise ValueError("token_positions must contain integers")
+            if not selected_positions.intersection(context.token_positions):
+                return False
+        configured_outputs = schedule.get("output_token_positions")
+        if configured_outputs is not None:
+            values = (
+                configured_outputs
+                if isinstance(configured_outputs, (list, tuple, set))
+                else [configured_outputs]
+            )
+            try:
+                output_positions = {int(value) for value in values}
+            except (TypeError, ValueError):
+                raise ValueError("output_token_positions must contain integers")
+            if context.output_token_position not in output_positions:
+                return False
         if step is not None:
             start = int(schedule.get("start", 0))
             stop = schedule.get("stop")

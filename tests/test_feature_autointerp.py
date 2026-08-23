@@ -5,9 +5,12 @@ import json
 import pytest
 
 from ltts_engine import (
+    DatasetExample,
     FeatureAutointerpreter,
     FeatureEvidence,
     InterpretationDraft,
+    build_dataset_manifest,
+    partition_feature_evidence,
     score_explanation,
 )
 
@@ -68,4 +71,33 @@ def test_autointerp_rejects_data_leakage_and_nonfinite_predictions():
             draft,
             (FeatureEvidence("a", "a", 1.0), FeatureEvidence("b", "b", 0.0)),
             predictor=lambda _draft, _evidence: float("nan"),
+        )
+
+
+def test_feature_evidence_uses_manifest_splits_without_leakage():
+    examples = [DatasetExample(str(index), {}) for index in range(100)]
+    manifest = build_dataset_manifest(
+        examples,
+        name="feature-prompts",
+        revision="v1",
+        seed=11,
+        validation_fraction=0.2,
+        test_fraction=0.2,
+    )
+    evidence = tuple(
+        FeatureEvidence(item.id, f"text {item.id}", float(index))
+        for index, item in enumerate(examples)
+    )
+    training, held_out = partition_feature_evidence(evidence, manifest)
+
+    assert {item.example_id for item in training} == set(manifest.ids("train"))
+    assert {item.example_id for item in held_out} == set(manifest.ids("test"))
+    assert not set(item.example_id for item in training).intersection(
+        item.example_id for item in held_out
+    )
+
+    omitted = manifest.ids("train")[0]
+    with pytest.raises(ValueError, match="missing"):
+        partition_feature_evidence(
+            tuple(item for item in evidence if item.example_id != omitted), manifest
         )

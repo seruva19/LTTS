@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import heapq
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
@@ -14,11 +16,184 @@ from .runtime import HeadlessSession
 FeatureExtractor = Callable[[torch.Tensor], torch.Tensor]
 
 
+DATASET_SPLITS = {"train", "validation", "test"}
+
+
 @dataclass(frozen=True)
 class DatasetExample:
     id: str
     inputs: Mapping[str, Any]
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DatasetManifestEntry:
+    id: str
+    split: str
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("Dataset manifest ids cannot be empty")
+        if self.split not in DATASET_SPLITS:
+            raise ValueError(f"Unsupported dataset split: {self.split}")
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"id": self.id, "split": self.split}
+
+
+@dataclass(frozen=True)
+class DatasetManifest:
+    name: str
+    revision: str
+    seed: int
+    validation_fraction: float
+    test_fraction: float
+    entries: Tuple[DatasetManifestEntry, ...]
+    fingerprint: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: int = 1
+
+    def ids(self, split: Optional[str] = None) -> Tuple[str, ...]:
+        if split is not None and split not in DATASET_SPLITS:
+            raise ValueError(f"Unsupported dataset split: {split}")
+        return tuple(
+            entry.id for entry in self.entries if split is None or entry.split == split
+        )
+
+    def split_for(self, example_id: str) -> str:
+        for entry in self.entries:
+            if entry.id == str(example_id):
+                return entry.split
+        raise KeyError(example_id)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "name": self.name,
+            "revision": self.revision,
+            "seed": self.seed,
+            "validation_fraction": self.validation_fraction,
+            "test_fraction": self.test_fraction,
+            "fingerprint": self.fingerprint,
+            "entries": [entry.to_dict() for entry in self.entries],
+            "metadata": dict(self.metadata),
+        }
+
+
+def dataset_split_for_id(
+    example_id: str,
+    *,
+    seed: int,
+    validation_fraction: float = 0.1,
+    test_fraction: float = 0.1,
+) -> str:
+    """Assign an id deterministically without depending on iteration order."""
+
+    validation = float(validation_fraction)
+    test = float(test_fraction)
+    if validation < 0 or test < 0 or validation + test >= 1:
+        raise ValueError("Validation/test fractions must be non-negative and sum below 1")
+    identifier = str(example_id)
+    if not identifier:
+        raise ValueError("Dataset example id cannot be empty")
+    digest = hashlib.sha256(f"{int(seed)}\0{identifier}".encode("utf-8")).digest()
+    value = int.from_bytes(digest[:8], "big") / 2**64
+    if value < test:
+        return "test"
+    if value < test + validation:
+        return "validation"
+    return "train"
+
+
+def build_dataset_manifest(
+    examples: Iterable[DatasetExample],
+    *,
+    name: str,
+    revision: str,
+    seed: int = 0,
+    validation_fraction: float = 0.1,
+    test_fraction: float = 0.1,
+    metadata: Optional[Mapping[str, Any]] = None,
+) -> DatasetManifest:
+    """Record stable ids/splits without serializing model input tensors."""
+
+    if not str(name).strip() or not str(revision).strip():
+        raise ValueError("Dataset manifest name and revision are required")
+    entries = []
+    seen = set()
+    for example in examples:
+        identifier = str(example.id)
+        if identifier in seen:
+            raise ValueError(f"Duplicate dataset example id: {identifier}")
+        seen.add(identifier)
+        entries.append(
+            DatasetManifestEntry(
+                id=identifier,
+                split=dataset_split_for_id(
+                    identifier,
+                    seed=seed,
+                    validation_fraction=validation_fraction,
+                    test_fraction=test_fraction,
+                ),
+            )
+        )
+    if not entries:
+        raise ValueError("Dataset manifest requires at least one example")
+    entries.sort(key=lambda item: item.id)
+    fingerprint_payload = {
+        "name": str(name),
+        "revision": str(revision),
+        "seed": int(seed),
+        "validation_fraction": float(validation_fraction),
+        "test_fraction": float(test_fraction),
+        "entries": [entry.to_dict() for entry in entries],
+    }
+    encoded = json.dumps(
+        fingerprint_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return DatasetManifest(
+        name=str(name),
+        revision=str(revision),
+        seed=int(seed),
+        validation_fraction=float(validation_fraction),
+        test_fraction=float(test_fraction),
+        entries=tuple(entries),
+        fingerprint="sha256:" + hashlib.sha256(encoded).hexdigest(),
+        metadata=dict(metadata or {}),
+    )
+
+
+def examples_for_split(
+    examples: Iterable[DatasetExample],
+    manifest: DatasetManifest,
+    split: str,
+    *,
+    require_complete: bool = True,
+) -> Iterable[DatasetExample]:
+    """Yield one manifest split and reject ids assigned to another manifest."""
+
+    selected = set(manifest.ids(split))
+    known = set(manifest.ids())
+    seen = set()
+    for example in examples:
+        identifier = str(example.id)
+        if identifier not in known:
+            raise ValueError(f"Dataset example is absent from manifest: {identifier}")
+        if identifier in selected:
+            if identifier in seen:
+                raise ValueError(f"Duplicate dataset example in stream: {identifier}")
+            seen.add(identifier)
+            yield example
+    if require_complete:
+        missing = sorted(selected.difference(seen))
+        if missing:
+            preview = ", ".join(missing[:10])
+            suffix = " ..." if len(missing) > 10 else ""
+            raise ValueError(
+                f"Dataset split {split!r} is missing {len(missing)} manifest ids: "
+                + preview
+                + suffix
+            )
 
 
 @dataclass(frozen=True)

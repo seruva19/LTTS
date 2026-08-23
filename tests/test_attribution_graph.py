@@ -129,6 +129,7 @@ def test_real_module_table_artifacts_convert_to_provenance_graphs():
     assert graph.node("target").metadata["token_id"] == 7
     assert [edge.score for edge in graph.edges] == [0.25, -0.1]
     assert graph.edges[0].metadata["artifact_row"] == 0
+    assert graph.node("layer:0").intervention_target.layer_path == "transformer.h.0"
 
     sae = Artifact(
         module="sae_features",
@@ -144,6 +145,7 @@ def test_real_module_table_artifacts_convert_to_provenance_graphs():
     graph = graph_from_sae_artifact(sae)
     assert graph.node("sae_feature:42").metadata["feature_id"] == 42
     assert graph.node("sae_feature:42").layer_path == "transformer.h.0"
+    assert graph.node("sae_feature:42").intervention_target.feature_id == 42
     assert [edge.score for edge in graph.edges] == [3.5, 1.25]
 
 

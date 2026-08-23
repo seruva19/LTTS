@@ -23,6 +23,36 @@ class TokenScore:
 
 
 @dataclass(frozen=True)
+class ResearchSelectionContext:
+    """Stable drill-down coordinates shared by artifacts and interventions."""
+
+    layer_path: str
+    position: int
+    component_kind: str = "component"
+    component_index: Optional[int] = None
+    output_token_id: Optional[int] = None
+    run_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.layer_path:
+            raise ValueError("Selection context requires a layer path")
+        if self.position < 0:
+            raise ValueError("Selection context position cannot be negative")
+        if self.component_index is not None and self.component_index < 0:
+            raise ValueError("Selection component index cannot be negative")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "output_token_id": self.output_token_id,
+            "layer_path": self.layer_path,
+            "component_kind": self.component_kind,
+            "component_index": self.component_index,
+            "position": self.position,
+        }
+
+
+@dataclass(frozen=True)
 class ComponentComparison:
     """Vocabulary effects of one component relative to another component."""
 
@@ -35,6 +65,7 @@ class ComponentComparison:
     suppressed: Tuple[TokenScore, ...]
     top_component_logits: Tuple[TokenScore, ...]
     schema_version: int = 1
+    selection: Optional[ResearchSelectionContext] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -49,6 +80,7 @@ class ComponentComparison:
             "top_component_logits": [
                 item.to_dict() for item in self.top_component_logits
             ],
+            "selection": self.selection.to_dict() if self.selection else None,
         }
 
 
@@ -58,7 +90,7 @@ class ComponentContribution:
 
     kind: str
     index: int
-    position: int
+    position: Optional[int]
     vector_norm: float
     promoted: Tuple[TokenScore, ...]
     suppressed: Tuple[TokenScore, ...]
@@ -280,6 +312,72 @@ def decompose_mlp_neurons(
     return tuple(results)
 
 
+def decompose_sae_features(
+    decoder: Callable[[torch.Tensor], torch.Tensor],
+    *,
+    feature_width: int,
+    feature_ids: Sequence[int],
+    output_embedding: nn.Module,
+    position: Optional[int] = None,
+    top_k: int = 10,
+    normalizer: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    token_decoder: Optional[Callable[[int], str]] = None,
+) -> Tuple[ComponentContribution, ...]:
+    """Project bias-free SAE decoder directions into vocabulary space."""
+
+    width = int(feature_width)
+    if width < 1:
+        raise ValueError("feature_width must be at least one")
+    selected = tuple(dict.fromkeys(int(item) for item in feature_ids))
+    if not selected:
+        raise ValueError("At least one SAE feature id is required")
+    invalid = [item for item in selected if not 0 <= item < width]
+    if invalid:
+        raise IndexError(f"SAE feature ids outside width {width}: {invalid}")
+    embedding_weight = _projection_weight(output_embedding)
+    device = embedding_weight.device
+    dtype = embedding_weight.dtype
+    owner = getattr(decoder, "parameters", None)
+    if callable(owner):
+        parameter = next(owner(), None)
+        if parameter is not None:
+            device, dtype = parameter.device, parameter.dtype
+    basis = torch.zeros((len(selected), width), device=device, dtype=dtype)
+    basis[
+        torch.arange(len(selected), device=device),
+        torch.tensor(selected, device=device),
+    ] = 1
+    zero = torch.zeros((1, width), device=device, dtype=dtype)
+    decoded = _first_hidden(decoder(basis))
+    decoded_zero = _first_hidden(decoder(zero))
+    if decoded.ndim != 2 or decoded.shape[0] != len(selected):
+        raise ValueError("SAE decoder must map [features, width] to [features, hidden]")
+    if decoded_zero.shape != (1, decoded.shape[-1]):
+        raise ValueError("SAE decoder output shape changed for the zero feature vector")
+    directions = decoded - decoded_zero
+    results = []
+    for offset, feature_id in enumerate(selected):
+        direction = directions[offset]
+        promoted, suppressed = _vocabulary_scores(
+            direction,
+            output_embedding=output_embedding,
+            normalizer=normalizer,
+            top_k=top_k,
+            decoder=token_decoder,
+        )
+        results.append(
+            ComponentContribution(
+                kind="sae_feature",
+                index=feature_id,
+                position=position,
+                vector_norm=float(direction.float().norm().detach().cpu()),
+                promoted=promoted,
+                suppressed=suppressed,
+            )
+        )
+    return tuple(results)
+
+
 class ComponentInspector:
     """Capture internal outputs and compare their vocabulary projections."""
 
@@ -369,6 +467,10 @@ class ComponentInspector:
         position: int = -1,
         top_k: int = 10,
         decoder: Optional[Callable[[int], str]] = None,
+        run_id: Optional[str] = None,
+        output_token_id: Optional[int] = None,
+        component_kind: str = "component",
+        component_index: Optional[int] = None,
     ) -> ComponentComparison:
         """Project component and component-minus-reference into vocabulary space."""
 
@@ -421,6 +523,14 @@ class ComponentInspector:
             suppressed=_rank(delta, largest=False, top_k=top_k, decoder=decoder),
             top_component_logits=_rank(
                 component_logits, largest=True, top_k=top_k, decoder=decoder
+            ),
+            selection=ResearchSelectionContext(
+                run_id=run_id,
+                output_token_id=output_token_id,
+                layer_path=component_layer,
+                component_kind=component_kind,
+                component_index=component_index,
+                position=resolved_position,
             ),
         )
 

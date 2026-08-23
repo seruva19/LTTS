@@ -11,6 +11,7 @@ from ltts_engine import (
     graph_from_cross_modal_attention,
     graph_from_vision_patch_scores,
     intervene_ssm_state,
+    research_workflow_matrix,
     ssm_effective_influence,
 )
 
@@ -137,3 +138,71 @@ def test_real_transformers_mamba_and_vit_boundaries_are_discovered():
     assert [point.path for point in vit_adapter.points("patch_embedding")] == [
         "embeddings.patch_embeddings"
     ]
+
+    mamba_matrix = {row.name: row for row in research_workflow_matrix(mamba_adapter)}
+    assert mamba_matrix["ssm_effective_influence"].supported
+    assert mamba_matrix["ssm_mixer_intervention"].capture_points == (
+        "backbone.layers.0.mixer",
+    )
+    assert not mamba_matrix["ssm_raw_state_intervention"].supported
+    assert mamba_matrix["ssm_raw_state_intervention"].missing_capabilities == (
+        "ssm_state_intervention",
+    )
+
+    vit_matrix = {row.name: row for row in research_workflow_matrix(vit_adapter)}
+    assert vit_matrix["vision_patch_attribution"].supported
+    assert vit_matrix["vision_patch_attribution"].capture_points == (
+        "embeddings.patch_embeddings",
+    )
+
+
+def test_real_vision_encoder_decoder_exposes_exact_cross_modal_boundary():
+    from transformers import (
+        GPT2Config,
+        ViTConfig,
+        VisionEncoderDecoderConfig,
+        VisionEncoderDecoderModel,
+    )
+
+    encoder = ViTConfig(
+        image_size=16,
+        patch_size=8,
+        num_channels=3,
+        hidden_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        intermediate_size=32,
+    )
+    decoder = GPT2Config(
+        vocab_size=32,
+        n_embd=16,
+        n_layer=1,
+        n_head=2,
+        n_positions=16,
+        add_cross_attention=True,
+        is_decoder=True,
+        bos_token_id=1,
+        eos_token_id=2,
+    )
+    model = VisionEncoderDecoderModel(
+        VisionEncoderDecoderConfig.from_encoder_decoder_configs(encoder, decoder)
+    )
+    adapter = discover_research_adapter(model)
+    matrix = {row.name: row for row in research_workflow_matrix(adapter)}
+
+    assert [point.path for point in adapter.points("patch_embedding")] == [
+        "encoder.embeddings.patch_embeddings"
+    ]
+    assert [point.path for point in adapter.points("cross_attention")] == [
+        "decoder.transformer.h.0.crossattention"
+    ]
+    assert matrix["cross_modal_attention_attribution"].supported
+    assert matrix["cross_modal_attention_attribution"].capture_points == (
+        "decoder.transformer.h.0.crossattention",
+    )
+
+    output = model(
+        pixel_values=torch.randn(1, 3, 16, 16),
+        decoder_input_ids=torch.tensor([[1, 2]]),
+    )
+    assert output.logits.shape == (1, 2, 32)

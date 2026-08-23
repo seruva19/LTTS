@@ -5,7 +5,7 @@ Event-dispatch wrapper for transformer models. Attention capture, module
 registration, and event delivery are handled by dedicated components.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import logging
@@ -57,6 +57,7 @@ class LTTSModel(nn.Module):
         self._cancellation_check = None
         self._generation_active = False
         self._generation_step = None
+        self._generation_prompt_length = None
         self._generation_hook = self.original_model.register_forward_pre_hook(
             self._track_generation_forward
         )
@@ -198,6 +199,7 @@ class LTTSModel(nn.Module):
 
             self._generation_active = True
             self._generation_step = -1
+            self._generation_prompt_length = self._input_sequence_length(args, kwargs)
             try:
                 if self.module_registry.has_modules_attached("model_before"):
                     self._dispatch_model_before_event(args, kwargs)
@@ -217,6 +219,7 @@ class LTTSModel(nn.Module):
                 return outputs
             finally:
                 self._generation_active = False
+                self._generation_prompt_length = None
         except Exception as e:
             logger.error("Error in LTTSModel generate: %s", e)
             raise
@@ -277,6 +280,15 @@ class LTTSModel(nn.Module):
         context.generation_active = self._generation_active
         context.generation_step = (
             self._generation_step if self._generation_active else None
+        )
+        context.token_positions = self._context_token_positions(context.inputs)
+        context.output_token_position = (
+            int(self._generation_prompt_length) + int(self._generation_step)
+            if self._generation_active
+            and self._generation_prompt_length is not None
+            and self._generation_step is not None
+            and self._generation_step >= 0
+            else None
         )
         if not context.architecture:
             context.architecture = dict(self.architecture)
@@ -349,6 +361,64 @@ class LTTSModel(nn.Module):
     def _track_generation_forward(self, _module, _inputs) -> None:
         if self._generation_active:
             self._generation_step = int(self._generation_step or 0) + 1
+
+    @staticmethod
+    def _first_tensor(value: Any) -> Optional[torch.Tensor]:
+        if isinstance(value, torch.Tensor):
+            return value
+        if isinstance(value, dict):
+            for key in ("input_ids", "inputs_embeds", "hidden_states"):
+                candidate = value.get(key)
+                if isinstance(candidate, torch.Tensor):
+                    return candidate
+            for candidate in value.values():
+                found = LTTSModel._first_tensor(candidate)
+                if found is not None:
+                    return found
+        if isinstance(value, (tuple, list)):
+            for candidate in value:
+                found = LTTSModel._first_tensor(candidate)
+                if found is not None:
+                    return found
+        return None
+
+    @classmethod
+    def _input_sequence_length(cls, args: Any, kwargs: Dict[str, Any]) -> Optional[int]:
+        tensor = cls._first_tensor(kwargs.get("input_ids"))
+        if tensor is None:
+            tensor = cls._first_tensor(kwargs.get("decoder_input_ids"))
+        if tensor is None:
+            tensor = cls._first_tensor(kwargs.get("inputs_embeds"))
+        if tensor is None:
+            tensor = cls._first_tensor(kwargs.get("inputs"))
+        if tensor is None:
+            candidate = cls._first_tensor(args)
+            if (
+                candidate is not None
+                and candidate.ndim == 2
+                and not candidate.is_floating_point()
+            ):
+                tensor = candidate
+        if tensor is None or tensor.ndim < 2:
+            return None
+        return int(tensor.shape[-1] if tensor.ndim == 2 else tensor.shape[-2])
+
+    def _context_token_positions(self, inputs: Any) -> Tuple[int, ...]:
+        tensor = self._first_tensor(inputs)
+        if tensor is None or tensor.ndim < 2:
+            return ()
+        sequence_length = int(tensor.shape[-1] if tensor.ndim == 2 else tensor.shape[-2])
+        if sequence_length < 1:
+            return ()
+        if (
+            self._generation_active
+            and sequence_length == 1
+            and self._generation_prompt_length is not None
+            and self._generation_step is not None
+            and self._generation_step > 0
+        ):
+            return (int(self._generation_prompt_length) + self._generation_step - 1,)
+        return tuple(range(sequence_length))
 
     def detach_module(self, event_type: str, module: Any):
         """

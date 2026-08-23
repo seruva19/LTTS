@@ -9,6 +9,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 from .experiments import CausalSweepResult
 from .inspection import ComponentComparison, ComponentContribution
 from .runtime import Artifact
+from .attributions import ComponentAttributionResult, TokenAttributionResult
 
 NODE_KINDS = {
     "input_token",
@@ -23,6 +24,39 @@ NODE_KINDS = {
 
 
 @dataclass(frozen=True)
+class InterventionTargetRef:
+    """Machine-readable coordinates for turning a graph node into an experiment."""
+
+    layer_path: str
+    position: Optional[int] = None
+    component_kind: Optional[str] = None
+    component_index: Optional[int] = None
+    feature_id: Optional[int] = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.layer_path:
+            raise ValueError("Intervention target requires a layer path")
+        for label, value in (
+            ("position", self.position),
+            ("component_index", self.component_index),
+            ("feature_id", self.feature_id),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"Intervention target {label} cannot be negative")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "layer_path": self.layer_path,
+            "position": self.position,
+            "component_kind": self.component_kind,
+            "component_index": self.component_index,
+            "feature_id": self.feature_id,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class AttributionNode:
     id: str
     kind: str
@@ -30,6 +64,7 @@ class AttributionNode:
     layer_path: Optional[str] = None
     position: Optional[int] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    intervention_target: Optional[InterventionTargetRef] = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -45,6 +80,9 @@ class AttributionNode:
             "layer_path": self.layer_path,
             "position": self.position,
             "metadata": dict(self.metadata),
+            "intervention_target": (
+                self.intervention_target.to_dict() if self.intervention_target else None
+            ),
         }
 
 
@@ -190,6 +228,7 @@ def graph_from_causal_sweep(
                 label=point.layer,
                 layer_path=point.layer,
                 metadata={"sweep_index": index},
+                intervention_target=InterventionTargetRef(layer_path=point.layer),
             )
         )
         builder.add_edge(
@@ -219,6 +258,9 @@ def graph_from_component_comparison(
             "source": "component_vocabulary_comparison",
             "reference_layer": comparison.reference_layer,
             "position": comparison.position,
+            "selection": (
+                comparison.selection.to_dict() if comparison.selection else None
+            ),
         }
     )
     builder.add_node(
@@ -228,6 +270,25 @@ def graph_from_component_comparison(
             label=comparison.component_layer,
             layer_path=comparison.component_layer,
             position=comparison.position,
+            metadata={
+                "selection": (
+                    comparison.selection.to_dict() if comparison.selection else None
+                )
+            },
+            intervention_target=InterventionTargetRef(
+                layer_path=comparison.component_layer,
+                position=comparison.position,
+                component_kind=(
+                    comparison.selection.component_kind
+                    if comparison.selection
+                    else "component"
+                ),
+                component_index=(
+                    comparison.selection.component_index
+                    if comparison.selection
+                    else None
+                ),
+            ),
         )
     )
     scores = {item.token_id: item for item in comparison.suppressed}
@@ -267,7 +328,17 @@ def graph_from_component_contributions(
         metadata={"source": "component_decomposition", "layer_path": layer_path}
     )
     for contribution in contributions:
-        kind = "attention_head" if contribution.kind == "attention_head" else "neuron"
+        kind_by_contribution = {
+            "attention_head": "attention_head",
+            "mlp_neuron": "neuron",
+            "sae_feature": "sae_feature",
+        }
+        try:
+            kind = kind_by_contribution[contribution.kind]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported component contribution kind: {contribution.kind}"
+            ) from exc
         component_id = f"{kind}:{contribution.index}"
         builder.add_node(
             AttributionNode(
@@ -277,6 +348,17 @@ def graph_from_component_contributions(
                 layer_path=layer_path,
                 position=contribution.position,
                 metadata={"vector_norm": contribution.vector_norm},
+                intervention_target=InterventionTargetRef(
+                    layer_path=layer_path,
+                    position=contribution.position,
+                    component_kind=contribution.kind,
+                    component_index=contribution.index,
+                    feature_id=(
+                        contribution.index
+                        if contribution.kind == "sae_feature"
+                        else None
+                    ),
+                ),
             )
         )
         token_scores = {item.token_id: item for item in contribution.suppressed}
@@ -371,6 +453,7 @@ def graph_from_dla_artifact(
                 label=str(row[label_index]),
                 layer_path=path,
                 metadata={"artifact_row": row_index},
+                intervention_target=InterventionTargetRef(layer_path=path),
             )
         )
         builder.add_edge(
@@ -423,6 +506,11 @@ def graph_from_sae_artifact(artifact: Artifact) -> AttributionGraph:
                 label=label,
                 layer_path=artifact.layer_path,
                 metadata={"feature_id": feature_id, "artifact_row": row_index},
+                intervention_target=InterventionTargetRef(
+                    layer_path=artifact.layer_path or "model",
+                    component_kind="sae_feature",
+                    feature_id=feature_id,
+                ),
             )
         )
         builder.add_edge(
@@ -496,6 +584,131 @@ def graph_from_attention_matrix(
     return builder.build()
 
 
+def graph_from_token_attribution(
+    result: TokenAttributionResult,
+) -> AttributionGraph:
+    """Build input-token-to-target edges from a structured attribution result."""
+
+    target_kind = "output_logit" if result.target.token_id is not None else "metric"
+    target_metadata = dict(result.target.metadata)
+    if result.target.token_id is not None:
+        target_metadata["token_id"] = result.target.token_id
+    if result.target.position is not None:
+        target_metadata["position"] = result.target.position
+    builder = AttributionGraphBuilder(
+        metadata={
+            "source": "token_attribution",
+            "method": result.method,
+            "score_semantics": result.score_semantics,
+            "layer_path": result.layer_path,
+            "provenance": dict(result.provenance),
+        }
+    )
+    builder.add_node(
+        AttributionNode(
+            id="target",
+            kind=target_kind,
+            label=result.target.label,
+            position=result.target.position,
+            metadata=target_metadata,
+        )
+    )
+    for point in result.points:
+        node_id = f"token:{point.position}"
+        builder.add_node(
+            AttributionNode(
+                id=node_id,
+                kind="input_token",
+                label=point.label or str(point.position),
+                position=point.position,
+                metadata=dict(point.metadata),
+            )
+        )
+        builder.add_edge(
+            AttributionEdge(
+                source=node_id,
+                target="target",
+                score=point.score,
+                method=result.method,
+                metadata={
+                    "score_semantics": result.score_semantics,
+                    "layer_path": result.layer_path,
+                    "provenance": dict(result.provenance),
+                },
+            )
+        )
+    return builder.build()
+
+
+def graph_from_component_attribution(
+    result: ComponentAttributionResult,
+) -> AttributionGraph:
+    """Build component-to-target edges from a structured attribution result."""
+
+    target_kind = "output_logit" if result.target.token_id is not None else "metric"
+    target_metadata = dict(result.target.metadata)
+    if result.target.token_id is not None:
+        target_metadata["token_id"] = result.target.token_id
+    builder = AttributionGraphBuilder(
+        metadata={
+            "source": "component_attribution",
+            "method": result.method,
+            "score_semantics": result.score_semantics,
+            "layer_path": result.layer_path,
+            "provenance": dict(result.provenance),
+        }
+    )
+    builder.add_node(
+        AttributionNode(
+            id="target",
+            kind=target_kind,
+            label=result.target.label,
+            position=result.target.position,
+            metadata=target_metadata,
+        )
+    )
+    for point in result.points:
+        node_id = f"{result.component_kind}:{point.index}"
+        builder.add_node(
+            AttributionNode(
+                id=node_id,
+                kind=result.component_kind,
+                label=point.label or f"{result.component_kind} {point.index}",
+                layer_path=result.layer_path,
+                metadata={"component_index": point.index, **point.metadata},
+                intervention_target=(
+                    InterventionTargetRef(
+                        layer_path=result.layer_path,
+                        component_kind=result.component_kind,
+                        component_index=point.index,
+                        feature_id=(
+                            point.index
+                            if result.component_kind == "sae_feature"
+                            else None
+                        ),
+                    )
+                    if result.layer_path
+                    else None
+                ),
+            )
+        )
+        builder.add_edge(
+            AttributionEdge(
+                source=node_id,
+                target="target",
+                score=point.score,
+                method=result.method,
+                metadata={
+                    "score_semantics": result.score_semantics,
+                    "layer_path": result.layer_path,
+                    "component_index": point.index,
+                    "provenance": dict(result.provenance),
+                },
+            )
+        )
+    return builder.build()
+
+
 def _shared_node_key(node: AttributionNode) -> Optional[Tuple[Any, ...]]:
     if node.kind == "output_logit" and "token_id" in node.metadata:
         return (node.kind, int(node.metadata["token_id"]))
@@ -551,6 +764,7 @@ def fuse_attribution_graphs(
                 layer_path=node.layer_path,
                 position=node.position,
                 metadata=metadata,
+                intervention_target=node.intervention_target,
             )
             existing = builder.get_node(node_id)
             if existing is not None:
@@ -567,6 +781,7 @@ def fuse_attribution_graphs(
                     layer_path=existing.layer_path,
                     position=existing.position,
                     metadata=merged_metadata,
+                    intervention_target=existing.intervention_target,
                 )
             if existing is None:
                 builder.add_node(candidate)

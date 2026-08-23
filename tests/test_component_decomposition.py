@@ -9,6 +9,7 @@ import torch.nn as nn
 from ltts_engine import (
     decompose_attention_heads,
     decompose_mlp_neurons,
+    decompose_sae_features,
     graph_from_component_contributions,
 )
 
@@ -47,6 +48,7 @@ def test_attention_head_decomposition_reconstructs_projected_logits():
         contributions, layer_path="transformer.h.0.attn"
     )
     assert len([node for node in graph.nodes if node.kind == "attention_head"]) == 2
+    assert graph.node("attention_head:0").intervention_target.component_index == 0
     assert all(
         edge.metadata["layer_path"] == "transformer.h.0.attn" for edge in graph.edges
     )
@@ -90,3 +92,37 @@ def test_component_decomposition_rejects_inexact_boundaries():
             output_embedding=nn.Linear(4, 5, bias=False),
             num_heads=2,
         )
+
+
+def test_sae_feature_directions_remove_decoder_bias_and_reach_vocabulary():
+    torch.manual_seed(47)
+    sae_decoder = nn.Linear(5, 6, bias=True)
+    output_embedding = nn.Linear(6, 9, bias=False)
+    contributions = decompose_sae_features(
+        sae_decoder,
+        feature_width=5,
+        feature_ids=[1, 4],
+        output_embedding=output_embedding,
+        position=2,
+        top_k=9,
+        token_decoder=lambda token_id: f"token-{token_id}",
+    )
+
+    for contribution, feature_id in zip(contributions, (1, 4)):
+        basis = torch.zeros(5)
+        basis[feature_id] = 1
+        direction = sae_decoder(basis) - sae_decoder(torch.zeros(5))
+        expected = output_embedding(direction)
+        actual = torch.tensor(
+            [_scores(contribution)[token_id] for token_id in range(9)]
+        )
+        assert torch.allclose(actual, expected, atol=1e-5)
+        assert contribution.kind == "sae_feature"
+        assert contribution.position == 2
+
+    graph = graph_from_component_contributions(
+        contributions, layer_path="transformer.h.0"
+    )
+    node = graph.node("sae_feature:1")
+    assert node.kind == "sae_feature"
+    assert node.intervention_target.feature_id == 1

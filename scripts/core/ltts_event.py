@@ -4,7 +4,7 @@ LTTSEvent and LTTSContext Implementation
 Core event container that provides lazy access to miners and carries complete context data.
 """
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import torch
@@ -36,6 +36,8 @@ class LTTSContext:
     architecture: Dict[str, Any] = field(default_factory=dict)
     generation_active: bool = False
     generation_step: Optional[int] = None
+    token_positions: Tuple[int, ...] = ()
+    output_token_position: Optional[int] = None
 
     # Specialized data for different layer types
     attention_weights: Any = None  # Captured attention weights for attention layers

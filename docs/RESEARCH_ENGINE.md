@@ -9,6 +9,7 @@ The public modules have intentionally narrow responsibilities:
 - `runtime.py` instruments one PyTorch model and manages module lifecycle.
 - `experiments.py` runs isolated baseline, control, and intervention trials.
 - `graphs.py` defines versioned attribution nodes, edges, and graph builders.
+- `attributions.py` normalizes token attribution artifacts and score semantics.
 - `inspection.py` captures components and projects changes into vocabulary space.
 - `datasets.py` scans activation or SAE features with bounded memory.
 - `autointerp.py` keeps feature explanation providers separate from evaluation.
@@ -16,6 +17,7 @@ The public modules have intentionally narrow responsibilities:
 - `diffing.py` aligns and compares two models or checkpoints.
 - `architectures.py` exposes capability-gated SSM and multimodal primitives.
 - `research_io.py` stores versioned research results with integrity checks.
+- `studies.py` composes result stages into a validated dependency graph.
 
 ## Lifecycle
 
@@ -79,14 +81,31 @@ Use `ComponentInspector.capture_inputs()` to capture those boundaries. Standard
 as `[input, output]` (including GPT-2's Conv1D projection) use
 `weight_layout="in_out"`.
 
+Vocabulary drill-down also carries a `ResearchSelectionContext` containing the
+run, output token, layer, component kind/index, and token position. Graph nodes
+derived from selections, sweeps, DLA, SAE, heads, or neurons expose an
+`InterventionTargetRef`, so a consumer can construct a follow-up experiment
+without parsing display labels.
+
 `ActivationDatasetScanner` accepts a streaming iterable and a feature extractor
 such as `sae.encode`. It retains running moments, activation frequency, maxima,
 and a bounded top-K heap per selected feature; it never stores the complete
 activation dataset.
 
+`build_dataset_manifest()` records sorted example ids, source revision,
+deterministic train/validation/test assignments, and a SHA-256 fingerprint. The
+split of an id depends only on that id and the seed, not iterable order.
+`examples_for_split()` rejects examples absent from the manifest, making dataset
+drift visible before SAE scanning or held-out autointerp evaluation. Input
+tensors are deliberately not serialized in the manifest.
+
 `build_feature_intervention()` edits selected encoded features and adds only the
 decoded feature delta to the original hidden state. This prevents SAE
 reconstruction error from being mistaken for the causal intervention.
+`decompose_sae_features()` decodes one-hot feature directions, subtracts decoder
+bias using the decoded zero vector, and projects the resulting directions into
+vocabulary space. Its graph nodes remain `sae_feature` nodes and retain feature
+ids for follow-up ablation or steering.
 
 `FeatureAutointerpreter` accepts a provider implemented by the caller. Provider
 training evidence and scoring evidence must be disjoint. A separate predictor
@@ -94,6 +113,8 @@ scores the generated explanation against held-out activations, reporting
 correlation, normalized absolute error, and top-versus-bottom separation. LTTS
 does not require a specific LLM service and does not treat generated labels as
 validated explanations without this independent score.
+`partition_feature_evidence()` selects training and held-out examples from the
+manifest and rejects duplicate, unknown, identical, or undersized splits.
 
 ## Attribution graph adapters
 
@@ -107,6 +128,18 @@ The resulting graphs can be combined with `fuse_attribution_graphs()`; shared
 token, logit, and metric targets are merged while source components remain
 namespaced.
 
+Occlusion, gradient-importance, and token-contributor artifacts first normalize
+into `TokenAttributionResult`. The result states whether scores are signed
+effects, absolute importance, or normalized importance and retains the exact
+target, layer, method, and module provenance. `graph_from_token_attribution()`
+then creates directed input-token-to-target edges without treating unlike score
+semantics as interchangeable.
+
+Gradient neuron tables normalize separately into
+`ComponentAttributionResult`; component kind and index are preserved when
+building neuron/head/feature-to-target graph edges. This prevents a neuron index
+from being mistaken for a token position merely because both are table rows.
+
 ## SSM and multimodal research
 
 `discover_research_adapter()` probes executable tensor boundaries instead of
@@ -114,6 +147,15 @@ matching model family names. It reports SSM state mixers, vision patch
 boundaries, and fusion modules only when their required attributes or forward
 arguments are actually present. Call `require()` before running a workflow that
 depends on one of these capabilities.
+
+`research_workflow_matrix()` produces an explicit supported/missing report for
+each SSM, vision, or cross-modal workflow, including the discovered capture
+paths. In particular, a Transformers Mamba mixer supports mixer-output
+intervention but is not reported as supporting raw recurrent-state intervention.
+Cross-modal discovery prefers modules that explicitly declare
+`is_cross_attention` and removes parent forwarding proxies. This has been tested
+with an actual tiny `VisionEncoderDecoderModel`, where the reported boundary is
+the decoder cross-attention module rather than its decoder/block parents.
 
 `ssm_effective_influence()` calculates source-to-target influence for a supplied
 diagonal recurrence and deliberately does not label it transformer attention.
@@ -132,6 +174,27 @@ timestamp, metadata, and SHA-256 checksum. `load_research_bundle()` verifies the
 checksum and rejects unknown schema versions or malformed payloads. Model id,
 revision, prompt/dataset id, seed, and module versions belong in bundle metadata
 so a stored measurement retains its reproduction context.
+
+`ResearchStudyBuilder` combines manifests, scans, explanations, interventions,
+and attribution graphs as named stages. Dependencies must already exist when a
+stage is added, stage names are unique, cycles are rejected, and tensor outputs
+cannot be retained accidentally. The resulting `ResearchStudyResult` can itself
+be stored in an integrity-checked research bundle.
+`ResearchStudyRunner` executes `ResearchStudyPlanStep` callbacks only after their
+declared dependencies, passes dependency results by name, rejects unknown or
+cyclic plans, and immediately converts every stage output to a mapping so model
+tensors are not retained across a long study.
+
+Two common plans are concrete rather than callback-only:
+
+- `CausalStudyRunner` executes an isolated layer sweep and immediately converts
+  it into a provenance-preserving attribution graph.
+- `FeatureStudyRunner` verifies that examples exactly match a manifest, scans
+  only its training split, partitions feature evidence through the same
+  manifest, and independently scores the explanation on the test split.
+
+Both return an ordinary `ResearchStudyResult`; neither depends on the UI or web
+application.
 
 ## Model and generation comparisons
 
@@ -155,6 +218,13 @@ session.attach(
 Schedules are optional. Existing modules without one retain their previous
 behavior. Decode steps are zero-based. Generation step information is also
 available on `event.context` and `event.environment`.
+
+Schedules may additionally use `token_positions` (positions present in the
+current layer input) and `output_token_positions` (the absolute token position
+being predicted). During cached decoding, the first model call exposes all
+prompt positions; later one-token calls expose their absolute generated-input
+position. Resolved positions and the original attachment schedule are available
+to the module through its event environment.
 
 `GenerationExperimentRunner` repeats baseline and intervention generation with
 the same RNG seed. Its durable result records complete and generated-only token

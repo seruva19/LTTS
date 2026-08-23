@@ -38,6 +38,10 @@ def test_component_drilldown_captures_once_and_projects_signed_logit_effects():
             normalizer=model.transformer.ln_f,
             top_k=4,
             decoder=lambda token_id: f"token-{token_id}",
+            run_id="run-17",
+            output_token_id=9,
+            component_kind="block",
+            component_index=1,
         )
 
     assert comparison.position == 3
@@ -47,10 +51,16 @@ def test_component_drilldown_captures_once_and_projects_signed_logit_effects():
     assert comparison.promoted[0].score >= comparison.promoted[-1].score
     assert comparison.suppressed[0].score <= comparison.suppressed[-1].score
     assert comparison.promoted[0].token.startswith("token-")
+    assert comparison.selection.run_id == "run-17"
+    assert comparison.selection.output_token_id == 9
+    assert comparison.selection.layer_path == layers[1]
+    assert comparison.selection.component_index == 1
     assert json.loads(json.dumps(comparison.to_dict()))["schema_version"] == 1
 
     graph = graph_from_component_comparison(comparison)
     assert graph.node("component").layer_path == layers[1]
+    assert graph.metadata["selection"]["run_id"] == "run-17"
+    assert graph.node("component").metadata["selection"]["output_token_id"] == 9
     assert {edge.method for edge in graph.edges} == {"vocabulary_projection_delta"}
     assert any(edge.score > 0 for edge in graph.edges)
     assert any(edge.score < 0 for edge in graph.edges)

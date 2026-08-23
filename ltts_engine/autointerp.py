@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Protocol, Sequence, Tuple
 
+from .datasets import DatasetManifest
+
 
 @dataclass(frozen=True)
 class FeatureEvidence:
@@ -183,3 +185,55 @@ class FeatureAutointerpreter:
             training_examples=tuple(item.example_id for item in training),
             held_out_score=score,
         )
+
+
+def partition_feature_evidence(
+    evidence: Sequence[FeatureEvidence],
+    manifest: DatasetManifest,
+    *,
+    training_split: str = "train",
+    held_out_split: str = "test",
+    require_complete: bool = True,
+) -> Tuple[Tuple[FeatureEvidence, ...], Tuple[FeatureEvidence, ...]]:
+    """Select disjoint autointerp evidence using a reproducible manifest."""
+
+    if training_split == held_out_split:
+        raise ValueError("Training and held-out splits must differ")
+    by_id = {}
+    for item in evidence:
+        if item.example_id in by_id:
+            raise ValueError(f"Duplicate feature evidence id: {item.example_id}")
+        by_id[item.example_id] = item
+    unknown = sorted(set(by_id).difference(manifest.ids()))
+    if unknown:
+        raise ValueError("Feature evidence is absent from manifest: " + ", ".join(unknown))
+    if require_complete:
+        expected = set(manifest.ids(training_split)).union(
+            manifest.ids(held_out_split)
+        )
+        missing = sorted(expected.difference(by_id))
+        if missing:
+            preview = ", ".join(missing[:10])
+            suffix = " ..." if len(missing) > 10 else ""
+            raise ValueError(
+                f"Feature evidence is missing {len(missing)} manifest ids: "
+                + preview
+                + suffix
+            )
+    training = tuple(
+        by_id[identifier]
+        for identifier in manifest.ids(training_split)
+        if identifier in by_id
+    )
+    held_out = tuple(
+        by_id[identifier]
+        for identifier in manifest.ids(held_out_split)
+        if identifier in by_id
+    )
+    if not training:
+        raise ValueError(f"No feature evidence belongs to {training_split!r}")
+    if len(held_out) < 2:
+        raise ValueError(
+            f"Held-out split {held_out_split!r} requires at least two evidence examples"
+        )
+    return training, held_out
