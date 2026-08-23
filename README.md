@@ -385,15 +385,15 @@ npm run build-client
 python ../LTTS-modules/tools/headless_validate.py --ltts-root .
 ```
 
-The Python suite includes an offline headless E2E matrix for decoder-only,
-encoder-only, encoder-decoder, and mixture-of-experts Transformers. Models are
-built from small random configs, so the matrix needs no model downloads,
-server, browser, or network access.
+The Python suite runs a shipped analysis module end to end on decoder-only,
+encoder-only, encoder-decoder, and mixture-of-experts Transformers. It builds
+small random models locally, so the matrix needs no downloads, server, browser,
+or network access.
 
 
 ## Demo
 
 The [Colab notebook](notebooks/LTTS_demo.ipynb) installs LTTS, starts the server,
-and opens the UI through a temporary public URL.
+and embeds the UI through Colab's authenticated runtime proxy.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/seruva19/LTTS/blob/main/notebooks/LTTS_demo.ipynb)

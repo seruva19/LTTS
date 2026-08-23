@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 
-def test_colab_notebook_uses_public_repositories_and_cloudflare_tunnel():
+def test_colab_notebook_uses_public_repositories_and_colab_proxy():
     notebook_path = Path(__file__).parents[1] / "notebooks" / "LTTS_demo.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
     source = "\n".join(
@@ -11,8 +11,7 @@ def test_colab_notebook_uses_public_repositories_and_cloudflare_tunnel():
 
     assert "github.com/seruva19/LTTS.git" in source
     assert "github.com/seruva19/LTTS-modules.git" in source
-    assert "start_quick_tunnel" in source
-    assert "cloudflared-linux-amd64" in source
+    assert "serve_kernel_port_as_iframe" in source
     assert "--no-deps repeng==0.4.0" in source
     assert "|repeng)' requirements.txt" in source
     assert "STOP_DEMO = False" in source
@@ -21,3 +20,5 @@ def test_colab_notebook_uses_public_repositories_and_cloudflare_tunnel():
     assert "registry.json" in source
     assert "localhost.run" not in source
     assert ".lhr.life" not in source
+    assert "trycloudflare.com" not in source
+    assert "start_quick_tunnel" not in source
