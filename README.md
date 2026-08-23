@@ -382,7 +382,13 @@ incompatible.
 ```
 python -m pytest -q
 npm run build-client
+python ../LTTS-modules/tools/headless_validate.py --ltts-root .
 ```
+
+The Python suite includes an offline headless E2E matrix for decoder-only,
+encoder-only, encoder-decoder, and mixture-of-experts Transformers. Models are
+built from small random configs, so the matrix needs no model downloads,
+server, browser, or network access.
 
 
 ## Demo

@@ -28,6 +28,12 @@ jobs:
           LTTS_SKIP_MODULE_VENVS: '1'
           LTTS_MODULES_DIR: LTTS-modules
         run: python -m pytest -q
+      - name: Isolated module contracts
+        env:
+          LTTS_SKIP_MODULE_VENVS: '1'
+        run: >-
+          python LTTS-modules/tools/headless_validate.py
+          --root LTTS-modules --ltts-root . --jobs 2 --timeout 120
 
   frontend:
     runs-on: ubuntu-latest
