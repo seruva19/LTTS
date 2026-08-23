@@ -52,6 +52,30 @@ class ComponentComparison:
         }
 
 
+@dataclass(frozen=True)
+class ComponentContribution:
+    """One head or neuron contribution projected into vocabulary space."""
+
+    kind: str
+    index: int
+    position: int
+    vector_norm: float
+    promoted: Tuple[TokenScore, ...]
+    suppressed: Tuple[TokenScore, ...]
+    schema_version: int = 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "kind": self.kind,
+            "index": self.index,
+            "position": self.position,
+            "vector_norm": self.vector_norm,
+            "promoted": [item.to_dict() for item in self.promoted],
+            "suppressed": [item.to_dict() for item in self.suppressed],
+        }
+
+
 def _first_hidden(output: Any) -> torch.Tensor:
     candidate = output[0] if isinstance(output, (tuple, list)) and output else output
     if not isinstance(candidate, torch.Tensor) or candidate.ndim < 2:
@@ -87,6 +111,175 @@ def _rank(
     )
 
 
+def _position(tensor: torch.Tensor, position: int) -> Tuple[torch.Tensor, int]:
+    if tensor.ndim != 3:
+        raise ValueError("Component decomposition requires [batch, sequence, width]")
+    resolved = position if position >= 0 else tensor.shape[1] + position
+    if not 0 <= resolved < tensor.shape[1]:
+        raise IndexError(
+            f"Position {position} is outside sequence length {tensor.shape[1]}"
+        )
+    return tensor[0, resolved], int(resolved)
+
+
+def _projection_weight(projection: nn.Module) -> torch.Tensor:
+    weight = getattr(projection, "weight", None)
+    if not isinstance(weight, torch.Tensor) or weight.ndim != 2:
+        raise TypeError("Projection must expose a rank-2 weight tensor")
+    return weight
+
+
+def _canonical_projection_weight(
+    projection: nn.Module, input_width: int, layout: str
+) -> torch.Tensor:
+    """Return a projection matrix in [output, input] layout."""
+
+    weight = _projection_weight(projection)
+    if layout not in {"auto", "out_in", "in_out"}:
+        raise ValueError("weight_layout must be auto, out_in, or in_out")
+    if layout == "out_in" or (layout == "auto" and isinstance(projection, nn.Linear)):
+        if weight.shape[-1] != input_width:
+            raise ValueError("Projection input width does not match component width")
+        return weight
+    if layout == "in_out":
+        if weight.shape[0] != input_width:
+            raise ValueError("Projection input width does not match component width")
+        return weight.T
+    out_in = weight.shape[1] == input_width
+    in_out = weight.shape[0] == input_width
+    if out_in == in_out:
+        raise ValueError(
+            "Projection weight layout is ambiguous; pass weight_layout explicitly"
+        )
+    return weight if out_in else weight.T
+
+
+def _vocabulary_scores(
+    vector: torch.Tensor,
+    *,
+    output_embedding: nn.Module,
+    normalizer: Optional[Callable[[torch.Tensor], torch.Tensor]],
+    top_k: int,
+    decoder: Optional[Callable[[int], str]],
+) -> Tuple[Tuple[TokenScore, ...], Tuple[TokenScore, ...]]:
+    weight = _projection_weight(output_embedding)
+    if vector.shape[-1] != weight.shape[-1]:
+        raise ValueError(
+            f"Contribution width {vector.shape[-1]} does not match output "
+            f"embedding width {weight.shape[-1]}"
+        )
+    projected = normalizer(vector) if normalizer is not None else vector
+    logits = F.linear(projected.to(weight.device), weight, None)
+    return (
+        _rank(logits, largest=True, top_k=top_k, decoder=decoder),
+        _rank(logits, largest=False, top_k=top_k, decoder=decoder),
+    )
+
+
+def decompose_attention_heads(
+    concatenated_heads: torch.Tensor,
+    *,
+    output_projection: nn.Module,
+    output_embedding: nn.Module,
+    num_heads: int,
+    weight_layout: str = "auto",
+    position: int = -1,
+    top_k: int = 10,
+    normalizer: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    decoder: Optional[Callable[[int], str]] = None,
+) -> Tuple[ComponentContribution, ...]:
+    """Project each pre-output-projection attention head independently.
+
+    ``concatenated_heads`` is the tensor immediately before the attention output
+    projection. Supporting this explicit boundary avoids pretending that heads
+    can be recovered exactly from an already projected residual contribution.
+    """
+
+    vector, resolved_position = _position(concatenated_heads, position)
+    if num_heads < 1 or vector.shape[-1] % num_heads:
+        raise ValueError("Hidden width must be divisible by num_heads")
+    projection_weight = _canonical_projection_weight(
+        output_projection, vector.shape[-1], weight_layout
+    )
+    head_width = vector.shape[-1] // num_heads
+    results = []
+    for index in range(num_heads):
+        start = index * head_width
+        stop = start + head_width
+        contribution = F.linear(
+            vector[start:stop].to(projection_weight.device),
+            projection_weight[:, start:stop],
+            None,
+        )
+        promoted, suppressed = _vocabulary_scores(
+            contribution,
+            output_embedding=output_embedding,
+            normalizer=normalizer,
+            top_k=top_k,
+            decoder=decoder,
+        )
+        results.append(
+            ComponentContribution(
+                kind="attention_head",
+                index=index,
+                position=resolved_position,
+                vector_norm=float(contribution.float().norm().detach().cpu()),
+                promoted=promoted,
+                suppressed=suppressed,
+            )
+        )
+    return tuple(results)
+
+
+def decompose_mlp_neurons(
+    neuron_activations: torch.Tensor,
+    *,
+    output_projection: nn.Module,
+    output_embedding: nn.Module,
+    neuron_ids: Optional[Sequence[int]] = None,
+    weight_layout: str = "auto",
+    position: int = -1,
+    top_k: int = 10,
+    normalizer: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    decoder: Optional[Callable[[int], str]] = None,
+) -> Tuple[ComponentContribution, ...]:
+    """Project individual post-activation MLP neurons through the down projection."""
+
+    vector, resolved_position = _position(neuron_activations, position)
+    projection_weight = _canonical_projection_weight(
+        output_projection, vector.shape[-1], weight_layout
+    )
+    selected = tuple(
+        dict.fromkeys(int(item) for item in neuron_ids or range(vector.shape[-1]))
+    )
+    invalid = [item for item in selected if not 0 <= item < vector.shape[-1]]
+    if invalid:
+        raise IndexError(f"Neuron ids outside width {vector.shape[-1]}: {invalid}")
+    results = []
+    for index in selected:
+        contribution = (
+            vector[index].to(projection_weight.device) * projection_weight[:, index]
+        )
+        promoted, suppressed = _vocabulary_scores(
+            contribution,
+            output_embedding=output_embedding,
+            normalizer=normalizer,
+            top_k=top_k,
+            decoder=decoder,
+        )
+        results.append(
+            ComponentContribution(
+                kind="mlp_neuron",
+                index=index,
+                position=resolved_position,
+                vector_norm=float(contribution.float().norm().detach().cpu()),
+                promoted=promoted,
+                suppressed=suppressed,
+            )
+        )
+    return tuple(results)
+
+
 class ComponentInspector:
     """Capture internal outputs and compare their vocabulary projections."""
 
@@ -117,6 +310,41 @@ class ComponentInspector:
                 captures[path] = _first_hidden(output).detach().clone()
 
             handles.append(available[layer].register_forward_hook(capture_output))
+        try:
+            output = self.session.run(*tuple(args), **dict(kwargs or {}))
+        finally:
+            for handle in handles:
+                handle.remove()
+        absent = [layer for layer in layers if layer not in captures]
+        if absent:
+            raise RuntimeError(
+                f"Component layer(s) did not execute: {', '.join(absent)}"
+            )
+        return output, captures
+
+    def capture_inputs(
+        self,
+        layers: Sequence[str],
+        *,
+        args: Sequence[Any] = (),
+        kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Tuple[Any, Dict[str, torch.Tensor]]:
+        """Run once and capture inputs at exact pre-projection boundaries."""
+
+        if not layers:
+            raise ValueError("At least one layer is required")
+        available = dict(self.session.model.original_model.named_modules())
+        missing = [layer for layer in layers if layer not in available]
+        if missing:
+            raise KeyError(f"Unknown component layer(s): {', '.join(missing)}")
+        captures: Dict[str, torch.Tensor] = {}
+        handles = []
+        for layer in layers:
+
+            def capture_input(_module, inputs, *, path=layer):
+                captures[path] = _first_hidden(inputs).detach().clone()
+
+            handles.append(available[layer].register_forward_pre_hook(capture_input))
         try:
             output = self.session.run(*tuple(args), **dict(kwargs or {}))
         finally:

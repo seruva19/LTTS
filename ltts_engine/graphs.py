@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Tuple
+import re
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from .experiments import CausalSweepResult
-from .inspection import ComponentComparison
+from .inspection import ComponentComparison, ComponentContribution
+from .runtime import Artifact
 
 NODE_KINDS = {
     "input_token",
@@ -252,6 +254,248 @@ def graph_from_component_comparison(
     return builder.build()
 
 
+def graph_from_component_contributions(
+    contributions: Tuple[ComponentContribution, ...],
+    *,
+    layer_path: str,
+) -> AttributionGraph:
+    """Build head/neuron-to-logit edges from an exact component decomposition."""
+
+    if not contributions:
+        raise ValueError("At least one component contribution is required")
+    builder = AttributionGraphBuilder(
+        metadata={"source": "component_decomposition", "layer_path": layer_path}
+    )
+    for contribution in contributions:
+        kind = "attention_head" if contribution.kind == "attention_head" else "neuron"
+        component_id = f"{kind}:{contribution.index}"
+        builder.add_node(
+            AttributionNode(
+                id=component_id,
+                kind=kind,
+                label=f"{contribution.kind} {contribution.index}",
+                layer_path=layer_path,
+                position=contribution.position,
+                metadata={"vector_norm": contribution.vector_norm},
+            )
+        )
+        token_scores = {item.token_id: item for item in contribution.suppressed}
+        token_scores.update({item.token_id: item for item in contribution.promoted})
+        for token_id, item in token_scores.items():
+            logit_id = f"logit:{token_id}"
+            if builder.get_node(logit_id) is None:
+                builder.add_node(
+                    AttributionNode(
+                        id=logit_id,
+                        kind="output_logit",
+                        label=item.token or str(token_id),
+                        metadata={"token_id": token_id},
+                    )
+                )
+            builder.add_edge(
+                AttributionEdge(
+                    source=component_id,
+                    target=logit_id,
+                    score=item.score,
+                    method="component_vocabulary_projection",
+                    metadata={
+                        "layer_path": layer_path,
+                        "position": contribution.position,
+                        "component_kind": contribution.kind,
+                        "component_index": contribution.index,
+                    },
+                )
+            )
+    return builder.build()
+
+
+def _table(artifact: Artifact) -> Tuple[Tuple[str, ...], Sequence[Sequence[Any]]]:
+    data = artifact.data
+    if not isinstance(data, Mapping) or data.get("type") != "table":
+        raise ValueError("Artifact must contain structured table data")
+    headers = tuple(str(item) for item in data.get("headers") or ())
+    rows = data.get("rows") or ()
+    if not headers or not isinstance(rows, (list, tuple)):
+        raise ValueError("Artifact table must contain headers and rows")
+    return headers, rows
+
+
+def _column(headers: Sequence[str], name: str) -> int:
+    normalized = [item.strip().lower() for item in headers]
+    try:
+        return normalized.index(name.strip().lower())
+    except ValueError as exc:
+        raise ValueError(f"Artifact table is missing column: {name}") from exc
+
+
+def graph_from_dla_artifact(
+    artifact: Artifact,
+    *,
+    target_label: str,
+    target_token_id: Optional[int] = None,
+) -> AttributionGraph:
+    """Convert a direct-logit-attribution table into a reproducible graph."""
+
+    headers, rows = _table(artifact)
+    path_index = _column(headers, "Path")
+    label_index = _column(headers, "Label")
+    score_index = _column(headers, "Delta logit")
+    target_id = "target"
+    target_metadata = (
+        {"token_id": int(target_token_id)} if target_token_id is not None else {}
+    )
+    builder = AttributionGraphBuilder(
+        metadata={
+            "source": "direct_logit_attribution_artifact",
+            "artifact_module": artifact.module,
+            "artifact_subtype": artifact.subtype,
+        }
+    )
+    builder.add_node(
+        AttributionNode(
+            id=target_id,
+            kind="output_logit",
+            label=target_label,
+            metadata=target_metadata,
+        )
+    )
+    for row_index, row in enumerate(rows):
+        if len(row) != len(headers):
+            raise ValueError(f"Artifact table row {row_index} has the wrong width")
+        path = str(row[path_index])
+        node_id = f"layer:{row_index}"
+        builder.add_node(
+            AttributionNode(
+                id=node_id,
+                kind="layer",
+                label=str(row[label_index]),
+                layer_path=path,
+                metadata={"artifact_row": row_index},
+            )
+        )
+        builder.add_edge(
+            AttributionEdge(
+                source=node_id,
+                target=target_id,
+                score=float(row[score_index]),
+                method="direct_logit_attribution",
+                metadata={
+                    "artifact_module": artifact.module,
+                    "artifact_subtype": artifact.subtype,
+                    "artifact_row": row_index,
+                },
+            )
+        )
+    return builder.build()
+
+
+def graph_from_sae_artifact(artifact: Artifact) -> AttributionGraph:
+    """Convert the sae_features top-feature table into feature-strength edges."""
+
+    headers, rows = _table(artifact)
+    feature_index = _column(headers, "Feature")
+    activation_index = _column(headers, "Activation")
+    metric_id = "activation"
+    builder = AttributionGraphBuilder(
+        metadata={
+            "source": "sae_feature_artifact",
+            "artifact_module": artifact.module,
+            "artifact_subtype": artifact.subtype,
+            "layer_path": artifact.layer_path,
+        }
+    )
+    builder.add_node(
+        AttributionNode(id=metric_id, kind="metric", label="feature activation")
+    )
+    for row_index, row in enumerate(rows):
+        if len(row) != len(headers):
+            raise ValueError(f"Artifact table row {row_index} has the wrong width")
+        label = str(row[feature_index])
+        match = re.search(r"-?\d+", label)
+        if match is None:
+            raise ValueError(f"Cannot parse SAE feature id from: {label}")
+        feature_id = int(match.group())
+        node_id = f"sae_feature:{feature_id}"
+        builder.add_node(
+            AttributionNode(
+                id=node_id,
+                kind="sae_feature",
+                label=label,
+                layer_path=artifact.layer_path,
+                metadata={"feature_id": feature_id, "artifact_row": row_index},
+            )
+        )
+        builder.add_edge(
+            AttributionEdge(
+                source=node_id,
+                target=metric_id,
+                score=float(row[activation_index]),
+                method="sae_activation",
+                metadata={
+                    "artifact_module": artifact.module,
+                    "artifact_subtype": artifact.subtype,
+                    "artifact_row": row_index,
+                },
+            )
+        )
+    return builder.build()
+
+
+def graph_from_attention_matrix(
+    values: Sequence[Sequence[float]],
+    *,
+    layer_path: str,
+    head_index: int,
+    token_labels: Optional[Sequence[str]] = None,
+    minimum_weight: float = 0.0,
+) -> AttributionGraph:
+    """Convert one [query, key] attention matrix into token-to-token edges."""
+
+    matrix = tuple(tuple(float(item) for item in row) for row in values)
+    if not matrix or any(len(row) != len(matrix) for row in matrix):
+        raise ValueError("Attention matrix must be non-empty and square")
+    size = len(matrix)
+    labels = tuple(token_labels or (str(index) for index in range(size)))
+    if len(labels) != size:
+        raise ValueError("token_labels length must match the attention matrix")
+    threshold = abs(float(minimum_weight))
+    builder = AttributionGraphBuilder(
+        metadata={
+            "source": "attention_matrix",
+            "layer_path": layer_path,
+            "head_index": int(head_index),
+        }
+    )
+    for position, label in enumerate(labels):
+        builder.add_node(
+            AttributionNode(
+                id=f"token:{position}",
+                kind="input_token",
+                label=str(label),
+                position=position,
+            )
+        )
+    for query, row in enumerate(matrix):
+        for key, weight in enumerate(row):
+            if abs(weight) < threshold:
+                continue
+            builder.add_edge(
+                AttributionEdge(
+                    source=f"token:{key}",
+                    target=f"token:{query}",
+                    score=weight,
+                    method="attention_weight",
+                    metadata={
+                        "layer_path": layer_path,
+                        "head_index": int(head_index),
+                        "query_position": query,
+                        "key_position": key,
+                    },
+                )
+            )
+    return builder.build()
+
+
 def _shared_node_key(node: AttributionNode) -> Optional[Tuple[Any, ...]]:
     if node.kind == "output_logit" and "token_id" in node.metadata:
         return (node.kind, int(node.metadata["token_id"]))
@@ -290,9 +534,7 @@ def fuse_attribution_graphs(
         for node in graph.nodes:
             shared_key = _shared_node_key(node)
             if shared_key is not None:
-                node_id = shared_ids.setdefault(
-                    shared_key, f"shared:{len(shared_ids)}"
-                )
+                node_id = shared_ids.setdefault(shared_key, f"shared:{len(shared_ids)}")
             else:
                 node_id = f"{source_name}:{node.id}"
             remapped[(source_name, node.id)] = node_id

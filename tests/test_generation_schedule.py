@@ -5,7 +5,12 @@ from types import ModuleType
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
-from ltts_engine import HeadlessEngine
+from ltts_engine import (
+    ExperimentCase,
+    GenerationExperimentRunner,
+    HeadlessEngine,
+    ModuleAttachment,
+)
 
 
 def _model():
@@ -42,6 +47,24 @@ def _probe_module():
             },
         )
         return {"status": "ok", "step": step}
+
+    module.interceptor = interceptor
+    return module
+
+
+def _force_token_module(target_vector):
+    module = ModuleType("force_generation_token")
+    module.METADATA = {
+        "name": "force_generation_token",
+        "event_types": ["layer_after"],
+    }
+
+    def interceptor(event):
+        hidden = event.context.outputs
+        changed = torch.zeros_like(hidden)
+        changed[...] = target_vector.to(device=hidden.device, dtype=hidden.dtype)
+        event.context.analysis_results["modified_outputs"] = changed
+        return {"status": "ok"}
 
     module.interceptor = interceptor
     return module
@@ -90,3 +113,38 @@ def test_model_after_attachment_retains_generation_context():
     assert len(artifacts) == 1
     assert artifacts[0].layer_path == "model"
     assert artifacts[0].data == {"type": "scalar", "value": 1}
+
+
+def test_generation_runner_saves_schedules_and_changed_token_trajectories():
+    model = _model()
+    module = _force_token_module(model.lm_head.weight[31].detach())
+    with HeadlessEngine().instrument(model) as session:
+        result = GenerationExperimentRunner(session).run(
+            cases=(
+                ExperimentCase(
+                    name="force-31",
+                    attachments=(
+                        ModuleAttachment(
+                            module=module,
+                            layer="transformer.ln_f",
+                            schedule={"generation_steps": [0, 1, 2]},
+                        ),
+                    ),
+                ),
+            ),
+            kwargs={
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "max_new_tokens": 3,
+                "do_sample": False,
+            },
+            seed=7,
+            decoder=lambda tokens: " ".join(str(token) for token in tokens),
+        )
+
+    trial = result.trials[0]
+    assert trial.generated_tokens == ((31, 31, 31),)
+    assert trial.generated_tokens != result.baseline.generated_tokens
+    assert trial.changed_positions[0]
+    assert trial.schedules[0]["schedule"] == {"generation_steps": [0, 1, 2]}
+    assert trial.schedules[0]["module"] == "force_generation_token"
+    assert trial.text == ("1 2 3 31 31 31",)

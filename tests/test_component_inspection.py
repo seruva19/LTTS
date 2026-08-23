@@ -8,6 +8,7 @@ from transformers import GPT2Config, GPT2LMHeadModel
 from ltts_engine import (
     ComponentInspector,
     HeadlessEngine,
+    decompose_attention_heads,
     graph_from_component_comparison,
 )
 
@@ -69,3 +70,26 @@ def test_component_capture_removes_temporary_hooks():
     assert captures[layer].shape == (1, 2, 16)
     assert len(block._forward_hooks) == before
     session.close()
+
+
+def test_component_input_capture_supports_real_gpt2_projection_boundary():
+    model = _model()
+    projection_path = "transformer.h.0.attn.c_proj"
+    projection = dict(model.named_modules())[projection_path]
+    before = len(projection._forward_pre_hooks)
+    with HeadlessEngine().instrument(model) as session:
+        _output, captures = ComponentInspector(session).capture_inputs(
+            [projection_path], kwargs={"input_ids": torch.tensor([[1, 2, 3]])}
+        )
+        contributions = decompose_attention_heads(
+            captures[projection_path],
+            output_projection=projection,
+            output_embedding=model.lm_head,
+            num_heads=model.config.n_head,
+            weight_layout="in_out",
+            top_k=model.config.vocab_size,
+        )
+
+    assert captures[projection_path].shape == (1, 3, model.config.n_embd)
+    assert len(contributions) == model.config.n_head
+    assert len(projection._forward_pre_hooks) == before

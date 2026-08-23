@@ -65,12 +65,31 @@ class LogitDifference:
 
 
 @dataclass(frozen=True)
+class TokenAlignmentDiagnostic:
+    left_shape: Tuple[int, ...]
+    right_shape: Tuple[int, ...]
+    exact_match: bool
+    mismatch_positions: Tuple[Tuple[int, int], ...]
+    truncated_mismatches: bool
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "left_shape": list(self.left_shape),
+            "right_shape": list(self.right_shape),
+            "exact_match": self.exact_match,
+            "mismatch_positions": [list(item) for item in self.mismatch_positions],
+            "truncated_mismatches": self.truncated_mismatches,
+        }
+
+
+@dataclass(frozen=True)
 class ModelDiffResult:
     alignments: Tuple[LayerAlignment, ...]
     activation_differences: Tuple[ActivationDifference, ...]
     logit_difference: Optional[LogitDifference]
     unmatched_left: Tuple[str, ...]
     unmatched_right: Tuple[str, ...]
+    token_alignment: Optional[TokenAlignmentDiagnostic] = None
     schema_version: int = 1
 
     def to_dict(self) -> Dict[str, Any]:
@@ -85,7 +104,45 @@ class ModelDiffResult:
             ),
             "unmatched_left": list(self.unmatched_left),
             "unmatched_right": list(self.unmatched_right),
+            "token_alignment": (
+                self.token_alignment.to_dict() if self.token_alignment else None
+            ),
         }
+
+
+def _token_alignment(
+    left_kwargs: Mapping[str, Any], right_kwargs: Mapping[str, Any]
+) -> Optional[TokenAlignmentDiagnostic]:
+    left = left_kwargs.get("input_ids")
+    right = right_kwargs.get("input_ids")
+    if left is None and right is None:
+        return None
+    if not isinstance(left, torch.Tensor) or not isinstance(right, torch.Tensor):
+        raise ValueError(
+            "Both model inputs must provide tensor input_ids for alignment"
+        )
+    if left.ndim != 2 or right.ndim != 2:
+        raise ValueError("Token alignment requires rank-2 input_ids")
+    mismatches = []
+    shared_batch = min(left.shape[0], right.shape[0])
+    shared_length = min(left.shape[1], right.shape[1])
+    unequal = (
+        left[:shared_batch, :shared_length] != right[:shared_batch, :shared_length]
+    ).nonzero()
+    for batch, position in unequal[:100].detach().cpu().tolist():
+        mismatches.append((int(batch), int(position)))
+    total_mismatches = int(unequal.shape[0])
+    if left.shape != right.shape:
+        total_mismatches += abs(
+            left.shape[0] * left.shape[1] - right.shape[0] * right.shape[1]
+        )
+    return TokenAlignmentDiagnostic(
+        left_shape=tuple(left.shape),
+        right_shape=tuple(right.shape),
+        exact_match=left.shape == right.shape and total_mismatches == 0,
+        mismatch_positions=tuple(mismatches),
+        truncated_mismatches=total_mismatches > len(mismatches),
+    )
 
 
 def _semantic_key(descriptor: Mapping[str, Any]) -> Tuple[Any, ...]:
@@ -222,6 +279,7 @@ class ModelDiffer:
         right_kwargs: Optional[Mapping[str, Any]] = None,
         roles: Sequence[str] = ("block",),
     ) -> ModelDiffResult:
+        resolved_right_kwargs = right_kwargs or left_kwargs
         alignments, unmatched_left, unmatched_right = align_layers(
             self.left, self.right, roles=roles
         )
@@ -232,7 +290,7 @@ class ModelDiffer:
         )
         right_output, right_captures = ComponentInspector(self.right).capture(
             [item.right for item in alignments],
-            kwargs=right_kwargs or left_kwargs,
+            kwargs=resolved_right_kwargs,
         )
         differences = tuple(
             _activation_difference(
@@ -246,4 +304,5 @@ class ModelDiffer:
             logit_difference=_logit_difference(left_output, right_output),
             unmatched_left=unmatched_left,
             unmatched_right=unmatched_right,
+            token_alignment=_token_alignment(left_kwargs, resolved_right_kwargs),
         )
