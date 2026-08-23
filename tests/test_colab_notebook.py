@@ -15,6 +15,7 @@ def test_colab_notebook_uses_public_repositories_and_cloudflare_tunnel():
     assert "cloudflared-linux-amd64" in source
     assert "--no-deps repeng==0.4.0" in source
     assert "|repeng)' requirements.txt" in source
+    assert "STOP_DEMO = False" in source
     assert "/api/ltts/modules" in source
     assert "localhost.run" not in source
     assert ".lhr.life" not in source
