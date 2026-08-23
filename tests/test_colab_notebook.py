@@ -17,5 +17,7 @@ def test_colab_notebook_uses_public_repositories_and_cloudflare_tunnel():
     assert "|repeng)' requirements.txt" in source
     assert "STOP_DEMO = False" in source
     assert "/api/ltts/modules" in source
+    assert "Modules failed to load" in source
+    assert "registry.json" in source
     assert "localhost.run" not in source
     assert ".lhr.life" not in source
