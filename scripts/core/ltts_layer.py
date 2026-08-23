@@ -25,6 +25,7 @@ class LTTSLayer:
         self.attention_kind = self.module_descriptor.get("attention_kind")
         self.layer_type = self._identify_layer_type()
         self.event_dispatcher = event_dispatcher
+        self._hook_handles = []
         self._setup_hooks()
 
     def _identify_layer_type(self) -> str:
@@ -73,8 +74,20 @@ class LTTSLayer:
             if self.event_dispatcher:
                 return self._dispatch_after_event(inputs, outputs)
 
-        self.original_layer.register_forward_pre_hook(pre_hook)
-        self.original_layer.register_forward_hook(post_hook)
+        self._hook_handles.extend(
+            (
+                self.original_layer.register_forward_pre_hook(pre_hook),
+                self.original_layer.register_forward_hook(post_hook),
+            )
+        )
+
+    def close(self) -> None:
+        """Remove instrumentation hooks owned by this wrapper."""
+
+        for handle in self._hook_handles:
+            handle.remove()
+        self._hook_handles.clear()
+        self.event_dispatcher = None
 
     def _dispatch_before_event(self, inputs):
         if not self.event_dispatcher:

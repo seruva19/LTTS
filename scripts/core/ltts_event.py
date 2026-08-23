@@ -34,6 +34,8 @@ class LTTSContext:
     layer_index: Optional[int] = None
     attention_kind: Optional[str] = None
     architecture: Dict[str, Any] = field(default_factory=dict)
+    generation_active: bool = False
+    generation_step: Optional[int] = None
 
     # Specialized data for different layer types
     attention_weights: Any = None  # Captured attention weights for attention layers
@@ -89,7 +91,9 @@ class LTTSReactor:
         if layer_path is not None:
             payload.setdefault("module_path", layer_path)
 
-        payload["event_type"] = payload.get("event_type") or payload.get("eventType") or "module_event"
+        payload["event_type"] = (
+            payload.get("event_type") or payload.get("eventType") or "module_event"
+        )
         payload["subtype"] = payload.get("subtype") or payload.get("type") or "generic"
 
         return payload
@@ -97,6 +101,7 @@ class LTTSReactor:
     def signal(self, signal_type: str, data: Any, client_token: Optional[str] = None):
         """Send signal to client UI."""
         import logging
+
         logger = logging.getLogger(__name__)
 
         normalized_data = data

@@ -100,6 +100,7 @@ class HeadlessSession:
         layer: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
         event_type: Optional[str] = None,
+        schedule: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Initialize and attach a module to a layer or model event."""
 
@@ -112,7 +113,9 @@ class HeadlessSession:
             self._initialized.append(module)
 
         if layer is not None:
-            resolved = self.model.attach_module_to_layer(layer, module, config)
+            resolved = self.model.attach_module_to_layer(
+                layer, module, config, schedule
+            )
             if resolved is None:
                 raise ValueError(f"Layer could not be resolved: {layer}")
             return resolved
@@ -123,7 +126,7 @@ class HeadlessSession:
         if not model_events:
             raise ValueError("A layer or model-level event_type is required")
         for item in model_events:
-            self.model.attach_module(str(item), module, config)
+            self.model.attach_module(str(item), module, config, schedule=schedule)
         return None
 
     def run(self, *args: Any, **kwargs: Any) -> Any:
@@ -158,7 +161,9 @@ class HeadlessSession:
     def clear_artifacts(self) -> None:
         self._bus.messages.clear()
 
-    def close(self) -> None:
+    def reset_modules(self, *, clear_artifacts: bool = True) -> None:
+        """Detach and clean up modules so the session can run another trial."""
+
         self.model.module_registry.detach_all_modules()
         for module in reversed(self._initialized):
             cleanup = getattr(module, "cleanup_module", None) or getattr(
@@ -167,6 +172,12 @@ class HeadlessSession:
             if callable(cleanup):
                 cleanup()
         self._initialized.clear()
+        if clear_artifacts:
+            self.clear_artifacts()
+
+    def close(self) -> None:
+        self.reset_modules()
+        self.model.close()
 
     def __enter__(self) -> "HeadlessSession":
         return self

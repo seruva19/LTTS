@@ -55,6 +55,11 @@ class LTTSModel(nn.Module):
         # Optional no-arg callable set by the inference service; when it
         # returns True the current run has been cancelled by the client.
         self._cancellation_check = None
+        self._generation_active = False
+        self._generation_step = None
+        self._generation_hook = self.original_model.register_forward_pre_hook(
+            self._track_generation_forward
+        )
 
         # Provide a default message bus if none is supplied or invalid
         if self.message_bus is None or not hasattr(self.message_bus, "publish"):
@@ -62,9 +67,7 @@ class LTTSModel(nn.Module):
                 from scripts.messages.message_bus import MessageBus
 
                 self.message_bus = MessageBus()
-                logger.info(
-                    "LTTS_MODEL: Using an isolated default message bus"
-                )
+                logger.info("LTTS_MODEL: Using an isolated default message bus")
             except Exception as e:
                 logger.warning("LTTS_MODEL: Failed to load default message bus: %s", e)
 
@@ -142,9 +145,7 @@ class LTTSModel(nn.Module):
 
         # Execute original model
         outputs = self.original_model(*args, **kwargs)
-        logger.debug(
-            "LTTSModel forward completed, outputs type: %s", type(outputs)
-        )
+        logger.debug("LTTSModel forward completed, outputs type: %s", type(outputs))
 
         # Prefer HF's native causal attentions: extract them whenever they were
         # requested, not only for model_after modules. Attention visualizers
@@ -195,22 +196,27 @@ class LTTSModel(nn.Module):
                 except Exception as e:
                     logger.debug("Failed to set attention mask: %s", e)
 
-            if self.module_registry.has_modules_attached("model_before"):
-                self._dispatch_model_before_event(args, kwargs)
+            self._generation_active = True
+            self._generation_step = -1
+            try:
+                if self.module_registry.has_modules_attached("model_before"):
+                    self._dispatch_model_before_event(args, kwargs)
 
-            generate_method = getattr(self.original_model, "generate")
-            outputs = generate_method(*args, **kwargs)
+                generate_method = getattr(self.original_model, "generate")
+                outputs = generate_method(*args, **kwargs)
 
-            if attn_needed:
-                try:
-                    self.attention_manager.extract_from_outputs(outputs)
-                except Exception as e:
-                    logger.debug("extract_from_outputs failed: %s", e)
+                if attn_needed:
+                    try:
+                        self.attention_manager.extract_from_outputs(outputs)
+                    except Exception as e:
+                        logger.debug("extract_from_outputs failed: %s", e)
 
-            if self.module_registry.has_modules_attached("model_after"):
-                self._dispatch_model_after_event(args, kwargs, outputs)
+                if self.module_registry.has_modules_attached("model_after"):
+                    self._dispatch_model_after_event(args, kwargs, outputs)
 
-            return outputs
+                return outputs
+            finally:
+                self._generation_active = False
         except Exception as e:
             logger.error("Error in LTTSModel generate: %s", e)
             raise
@@ -263,12 +269,15 @@ class LTTSModel(nn.Module):
             )
 
             raise InferenceCancelledError(
-                "Inference cancelled by client between layers "
-                f"(event={event_type})"
+                "Inference cancelled by client between layers " f"(event={event_type})"
             )
 
         # Add reference to LTTSModel for accessing model-level attention weights
         context.ltts_model = self
+        context.generation_active = self._generation_active
+        context.generation_step = (
+            self._generation_step if self._generation_active else None
+        )
         if not context.architecture:
             context.architecture = dict(self.architecture)
 
@@ -284,6 +293,7 @@ class LTTSModel(nn.Module):
         module_config: Optional[Dict[str, Any]] = None,
         target_layer: Optional[str] = None,
         requested_layer: Optional[str] = None,
+        schedule: Optional[Dict[str, Any]] = None,
     ):
         """
         Attach module to specific event type.
@@ -296,7 +306,12 @@ class LTTSModel(nn.Module):
             requested_layer: Originally requested layer path
         """
         self.module_registry.attach_module(
-            event_type, module, module_config, target_layer, requested_layer
+            event_type,
+            module,
+            module_config,
+            target_layer,
+            requested_layer,
+            schedule,
         )
 
     def attach_model_level_module(self, module: Any):
@@ -314,6 +329,7 @@ class LTTSModel(nn.Module):
         layer_name: str,
         module: Any,
         module_config: Optional[Dict[str, Any]] = None,
+        schedule: Optional[Dict[str, Any]] = None,
     ):
         """
         Attach module to specific layer's events with automatic layer path correction.
@@ -326,7 +342,13 @@ class LTTSModel(nn.Module):
         Returns:
             Resolved layer path or None if attachment failed
         """
-        return self.module_registry.attach_to_layer(layer_name, module, module_config)
+        return self.module_registry.attach_to_layer(
+            layer_name, module, module_config, schedule
+        )
+
+    def _track_generation_forward(self, _module, _inputs) -> None:
+        if self._generation_active:
+            self._generation_step = int(self._generation_step or 0) + 1
 
     def detach_module(self, event_type: str, module: Any):
         """
@@ -371,11 +393,20 @@ class LTTSModel(nn.Module):
         """Property for current decode step."""
         return self.attention_manager.decode_step
 
+    def close(self):
+        """Release hooks and cached instrumentation owned by this wrapper."""
+
+        self.module_registry.detach_all_modules()
+        self.attention_manager.cleanup()
+        for wrapper in self.layer_wrappers.values():
+            wrapper.close()
+        if self._generation_hook is not None:
+            self._generation_hook.remove()
+            self._generation_hook = None
+
     def __del__(self):
         """Cleanup on deletion."""
         try:
-            attention_manager = getattr(self, "attention_manager", None)
-            if attention_manager is not None:
-                attention_manager.cleanup()
+            self.close()
         except Exception:
             pass

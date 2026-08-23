@@ -34,6 +34,7 @@ class ModuleRegistry:
         module_config: Optional[Dict[str, Any]] = None,
         target_layer: Optional[str] = None,
         requested_layer: Optional[str] = None,
+        schedule: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Attach module to specific event type.
@@ -65,6 +66,7 @@ class ModuleRegistry:
                 primary["target_layer"] = target_layer
                 primary["requested_layer"] = requested_layer
                 primary["state"] = dict(module_config or {})
+                primary["schedule"] = dict(schedule or {})
             else:
                 idx = attachments.index(primary)
                 primary = {
@@ -73,6 +75,7 @@ class ModuleRegistry:
                     "target_layer": target_layer,
                     "requested_layer": requested_layer,
                     "state": dict(module_config or {}),
+                    "schedule": dict(schedule or {}),
                 }
                 attachments[idx] = primary
 
@@ -94,6 +97,7 @@ class ModuleRegistry:
             "requested_layer": requested_layer,
             # Initialize per-attachment persistent state from module_config for compatibility
             "state": dict(module_config or {}),
+            "schedule": dict(schedule or {}),
             "metrics": {
                 "invocations": 0,
                 "emissions": 0,
@@ -123,6 +127,7 @@ class ModuleRegistry:
         layer_name: str,
         module: Any,
         module_config: Optional[Dict[str, Any]] = None,
+        schedule: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """
         Attach module to specific layer with automatic path resolution.
@@ -167,6 +172,7 @@ class ModuleRegistry:
                     module_config=module_config,
                     target_layer=candidate,
                     requested_layer=layer_name,
+                    schedule=schedule,
                 )
                 logger.info(
                     "✅ MODULE_REGISTRY: Attached %s to %s (resolved from %s)",
@@ -200,6 +206,7 @@ class ModuleRegistry:
                     module_config=module_config,
                     target_layer=matching_layers[0],
                     requested_layer=layer_name,
+                    schedule=schedule,
                 )
                 logger.info(
                     "✅ MODULE_REGISTRY: Attached %s to %s (partial from %s)",
@@ -211,9 +218,7 @@ class ModuleRegistry:
 
         # Final fallback - attach to a similar layer, but require at least
         # 2 significant path segments to match to avoid wrong-layer attachment.
-        requested_parts = [
-            part for part in layer_name.split(".") if len(part) > 2
-        ]
+        requested_parts = [part for part in layer_name.split(".") if len(part) > 2]
         if len(requested_parts) >= 2:
             for available_layer in self.layer_wrappers.keys():
                 available_parts = available_layer.split(".")
@@ -221,7 +226,9 @@ class ModuleRegistry:
                     1 for part in requested_parts if part in available_parts
                 )
                 if matching_parts >= 2:
-                    layer_event_type = f"layer_after_{available_layer.replace('.', '_')}"
+                    layer_event_type = (
+                        f"layer_after_{available_layer.replace('.', '_')}"
+                    )
 
                     if getattr(module, "_target_layer", None) != available_layer:
                         module._target_layer = available_layer
@@ -232,6 +239,7 @@ class ModuleRegistry:
                         module_config=module_config,
                         target_layer=available_layer,
                         requested_layer=layer_name,
+                        schedule=schedule,
                     )
                     logger.info(
                         "✅ MODULE_REGISTRY: Attached %s to %s (fallback from %s, matched %d parts)",
@@ -324,3 +332,4 @@ class ModuleRegistry:
                 if module_obj is None:
                     continue
                 self.detach_module(event_type, module_obj)
+        self.attached_modules.clear()

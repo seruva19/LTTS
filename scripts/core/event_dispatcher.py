@@ -56,6 +56,7 @@ class EventDispatcher:
                     module_config = attachment.get("module_config") or {}
                     target_layer = attachment.get("target_layer")
                     requested_layer = attachment.get("requested_layer")
+                    schedule = attachment.get("schedule") or {}
                     attachment_state = attachment.get("state") or {}
                     metrics = self._ensure_metrics_container(attachment)
                 else:
@@ -63,8 +64,12 @@ class EventDispatcher:
                     module_config = {}
                     target_layer = None
                     requested_layer = None
+                    schedule = {}
                     attachment_state = {}
                     metrics = None
+
+                if not self._schedule_matches(schedule, context):
+                    continue
 
                 # Only log module calls at debug level
                 logger.debug(
@@ -87,6 +92,10 @@ class EventDispatcher:
                 if requested_layer:
                     module_event.environment["requested_layer_path"] = requested_layer
                 module_event.environment["module_config"] = dict(module_config)
+                module_event.environment["generation_active"] = bool(
+                    context.generation_active
+                )
+                module_event.environment["generation_step"] = context.generation_step
 
                 before_signal_count = len(reactor.signals)
                 call_started = time.time()
@@ -116,7 +125,9 @@ class EventDispatcher:
                     metrics["last_result"] = result
                     metrics["last_emitted"] = emitted
                     metrics["last_error"] = None
-                    metrics["last_signal_count"] = after_signal_count - before_signal_count
+                    metrics["last_signal_count"] = (
+                        after_signal_count - before_signal_count
+                    )
 
                 event_summaries.append(
                     self._build_module_summary(
@@ -277,7 +288,9 @@ class EventDispatcher:
         serialized = dict(metrics)
         timestamp = serialized.get("last_invoked_at")
         if isinstance(timestamp, (int, float)):
-            serialized["last_invoked_at"] = datetime.fromtimestamp(timestamp).isoformat()
+            serialized["last_invoked_at"] = datetime.fromtimestamp(
+                timestamp
+            ).isoformat()
         last_result = serialized.get("last_result")
         if last_result is not None:
             try:
@@ -320,3 +333,37 @@ class EventDispatcher:
             logger.debug(
                 "EVENT_DISPATCHER: Failed to publish event log: %s", publish_error
             )
+
+    @staticmethod
+    def _schedule_matches(schedule: Dict[str, Any], context: LTTSContext) -> bool:
+        if not schedule:
+            return True
+        step = context.generation_step
+        generation_only = bool(
+            schedule.get("generation_only", "generation_steps" in schedule)
+        )
+        if generation_only and not context.generation_active:
+            return False
+        configured = schedule.get("generation_steps")
+        if configured is not None:
+            values = (
+                configured
+                if isinstance(configured, (list, tuple, set))
+                else [configured]
+            )
+            try:
+                if step is None or int(step) not in {int(value) for value in values}:
+                    return False
+            except (TypeError, ValueError):
+                raise ValueError("generation_steps must contain integers")
+        if step is not None:
+            start = int(schedule.get("start", 0))
+            stop = schedule.get("stop")
+            every = int(schedule.get("every", 1))
+            if every < 1:
+                raise ValueError("schedule every must be at least one")
+            if step < start or (stop is not None and step >= int(stop)):
+                return False
+            if (step - start) % every:
+                return False
+        return True
