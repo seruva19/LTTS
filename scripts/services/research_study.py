@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
+from ltts_engine.study_artifacts import StudyArtifactCollection, StudyArtifactRecord
 from scripts.services.inference.contracts import InferenceInput
 from scripts.services.inference_service import InferenceService
 
@@ -25,7 +26,7 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _artifact_score(message: Mapping[str, Any]) -> float | None:
+def _artifact_metric_score(message: Mapping[str, Any]) -> tuple[str, float] | None:
     payload = message.get("data")
     if isinstance(payload, Mapping) and isinstance(payload.get("visualization"), Mapping):
         payload = payload["visualization"]
@@ -34,11 +35,18 @@ def _artifact_score(message: Mapping[str, Any]) -> float | None:
     for key in _SCORE_KEYS:
         score = _finite_number(payload.get(key))
         if score is not None:
-            return score
+            return key, score
     stats = payload.get("stats")
     if isinstance(stats, Mapping):
-        return _finite_number(stats.get("mean"))
+        score = _finite_number(stats.get("mean"))
+        if score is not None:
+            return "mean", score
     return None
+
+
+def _artifact_score(message: Mapping[str, Any]) -> float | None:
+    metric_score = _artifact_metric_score(message)
+    return None if metric_score is None else metric_score[1]
 
 
 def _artifact_layer(message: Mapping[str, Any]) -> str | None:
@@ -170,6 +178,52 @@ class ResearchStudyService:
         rows.sort(key=lambda row: abs(row["mean_effect"]), reverse=True)
         return rows
 
+    @staticmethod
+    def _artifact_collection(
+        name: str,
+        study_id: str,
+        trials: Sequence[CapturedTrial],
+        manifest: Mapping[str, Any],
+    ) -> StudyArtifactCollection:
+        records = []
+        for trial_index, trial in enumerate(trials):
+            for artifact_index, artifact in enumerate(trial.artifacts):
+                layer = _artifact_layer(artifact)
+                metric_score = _artifact_metric_score(artifact)
+                if not layer or metric_score is None:
+                    continue
+                metric, score = metric_score
+                payload = artifact.get("data")
+                details = payload if isinstance(payload, Mapping) else {}
+                records.append(
+                    StudyArtifactRecord(
+                        artifact_id=f"{study_id}:{trial_index}:{artifact_index}",
+                        metric=metric,
+                        value=score,
+                        module=str(artifact.get("module") or "unknown"),
+                        subtype=str(artifact.get("subtype") or "generic"),
+                        layer_path=layer,
+                        component=details.get("component"),
+                        token_index=details.get("token_index"),
+                        token=details.get("token"),
+                        seed=trial.seed,
+                        example_id=trial.example_id,
+                        stage="scan",
+                        run_id=study_id,
+                        metadata={
+                            "source": "web_research_study",
+                            "artifact_type": artifact.get("subtype")
+                            or artifact.get("type"),
+                        },
+                    )
+                )
+        return StudyArtifactCollection(
+            name=name,
+            records=tuple(records),
+            manifest_fingerprint=manifest.get("fingerprint"),
+            metadata={"study_id": study_id},
+        )
+
     async def run(
         self,
         *,
@@ -183,6 +237,7 @@ class ResearchStudyService:
         client_token: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
+        study_id = str(uuid.uuid4())
         trials: List[CapturedTrial] = []
         for example in examples:
             for seed in seeds:
@@ -199,9 +254,10 @@ class ResearchStudyService:
                 )
 
         candidates = self._aggregate(trials)
+        artifacts = self._artifact_collection(name, study_id, trials, manifest)
         result = {
             "schema_version": 1,
-            "study_id": str(uuid.uuid4()),
+            "study_id": study_id,
             "name": name,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "model_id": model_id,
@@ -225,6 +281,7 @@ class ResearchStudyService:
                 },
             ],
             "trials": [trial.to_dict() for trial in trials],
+            "artifacts": artifacts.to_dict(),
             "candidates": candidates,
         }
 

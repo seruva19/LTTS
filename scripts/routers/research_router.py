@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from ltts_engine import (
+    ResearchStudyArchive,
+    StudyArtifactCollection,
+    bundle_study_archive,
+    compare_study_artifacts,
+    research_bundle_from_dict,
+    study_archive_from_bundle,
+)
 from scripts.services.research_study import ResearchStudyService
 
 
@@ -49,6 +57,27 @@ class ResearchStudyInput(BaseModel):
         return examples
 
 
+class ResearchArchiveInput(BaseModel):
+    archive: Dict[str, Any]
+
+
+class ResearchBundleInput(BaseModel):
+    bundle: Dict[str, Any]
+
+
+class ResearchComparisonInput(BaseModel):
+    baseline: Dict[str, Any]
+    candidate: Dict[str, Any]
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _unprocessable(operation):
+    try:
+        return operation()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def create_research_router(context):
     router = APIRouter()
     service = ResearchStudyService(context)
@@ -65,6 +94,29 @@ def create_research_router(context):
             modules=input.modules,
             client_token=input.client_token or "default",
             metadata=input.metadata,
+        )
+
+    @router.post("/api/research/studies/archive")
+    async def archive_research_study(input: ResearchArchiveInput):
+        archive = _unprocessable(lambda: ResearchStudyArchive.from_dict(input.archive))
+        return bundle_study_archive(archive).to_dict()
+
+    @router.post("/api/research/studies/restore")
+    async def restore_research_study(input: ResearchBundleInput):
+        return _unprocessable(
+            lambda: study_archive_from_bundle(
+                research_bundle_from_dict(input.bundle)
+            ).to_dict()
+        )
+
+    @router.post("/api/research/studies/compare")
+    async def compare_research_studies(input: ResearchComparisonInput):
+        return _unprocessable(
+            lambda: compare_study_artifacts(
+                StudyArtifactCollection.from_dict(input.baseline),
+                StudyArtifactCollection.from_dict(input.candidate),
+                metadata=input.metadata,
+            ).to_dict()
         )
 
     return router

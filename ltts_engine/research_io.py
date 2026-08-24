@@ -12,10 +12,33 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 
+def _normalize_numbers(value: Any) -> Any:
+    """Make checksum semantics stable across JSON clients using 1 or 1.0."""
+
+    if isinstance(value, Mapping):
+        return {str(key): _normalize_numbers(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_numbers(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _canonical(payload: Mapping[str, Any]) -> bytes:
+    normalized_payload = dict(payload)
+    created_at = normalized_payload.get("created_at")
+    if isinstance(created_at, str):
+        try:
+            normalized_payload["created_at"] = datetime.fromisoformat(
+                created_at.replace("Z", "+00:00")
+            ).astimezone(timezone.utc).isoformat()
+        except ValueError:
+            # Invalid timestamps are preserved and validated by the caller's
+            # schema; checksum calculation must remain deterministic.
+            pass
     try:
         encoded = json.dumps(
-            payload,
+            _normalize_numbers(normalized_payload),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -28,6 +51,22 @@ def _canonical(payload: Mapping[str, Any]) -> bytes:
 
 def _checksum(payload: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(_canonical(payload)).hexdigest()
+
+
+def _legacy_checksum(payload: Mapping[str, Any]) -> str:
+    """Checksum emitted before numeric canonicalization; accepted for imports."""
+
+    try:
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Research bundle data must be finite and JSON-serializable") from exc
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -109,10 +148,18 @@ def load_research_bundle(path: "str | Path") -> ResearchRunBundle:
         document = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot read research bundle: {source}") from exc
-    if not isinstance(document, dict):
+    return research_bundle_from_dict(document)
+
+
+def research_bundle_from_dict(document: Mapping[str, Any]) -> ResearchRunBundle:
+    """Validate an in-memory bundle document without requiring filesystem I/O."""
+
+    if not isinstance(document, Mapping):
         raise ValueError("Research bundle root must be an object")
+    document = dict(document)
     checksum = document.pop("checksum", None)
-    if not isinstance(checksum, str) or checksum != _checksum(document):
+    accepted_checksums = {_checksum(document), _legacy_checksum(document)}
+    if not isinstance(checksum, str) or checksum not in accepted_checksums:
         raise ValueError("Research bundle checksum mismatch")
     if document.get("schema_version") != 1:
         raise ValueError(

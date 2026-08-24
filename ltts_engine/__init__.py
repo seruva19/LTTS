@@ -100,6 +100,7 @@ from .research_io import (
     ResearchRunBundle,
     bundle_result,
     load_research_bundle,
+    research_bundle_from_dict,
     save_research_bundle,
 )
 from .studies import (
@@ -110,6 +111,17 @@ from .studies import (
     ResearchStudyResult,
     ResearchStudyRunner,
     ResearchStudyStage,
+)
+from .study_artifacts import (
+    ResearchStudyArchive,
+    ResearchStudyComparison,
+    StudyArtifactCollection,
+    StudyArtifactRecord,
+    StudyComparisonPoint,
+    archive_research_study,
+    bundle_study_archive,
+    compare_study_artifacts,
+    study_archive_from_bundle,
 )
 
 __all__ = [
@@ -154,10 +166,15 @@ __all__ = [
     "ResearchRunBundle",
     "ResearchSelectionContext",
     "ResearchStudyBuilder",
+    "ResearchStudyArchive",
+    "ResearchStudyComparison",
     "ResearchStudyPlanStep",
     "ResearchStudyResult",
     "ResearchStudyRunner",
     "ResearchStudyStage",
+    "StudyArtifactCollection",
+    "StudyArtifactRecord",
+    "StudyComparisonPoint",
     "ResearchWorkflowCompatibility",
     "ResearchWorkflowRequirement",
     "HeadlessEngine",
@@ -182,6 +199,9 @@ __all__ = [
     "attribution_from_token_contributor_artifact",
     "component_attribution_from_gradient_artifact",
     "bundle_result",
+    "bundle_study_archive",
+    "archive_research_study",
+    "compare_study_artifacts",
     "decompose_attention_heads",
     "decompose_mlp_neurons",
     "decompose_sae_features",
@@ -203,7 +223,9 @@ __all__ = [
     "examples_for_split",
     "load_module",
     "load_research_bundle",
+    "research_bundle_from_dict",
     "save_research_bundle",
+    "study_archive_from_bundle",
     "research_workflow_matrix",
     "partition_feature_evidence",
     "score_explanation",

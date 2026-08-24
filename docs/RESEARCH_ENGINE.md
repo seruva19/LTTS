@@ -196,6 +196,27 @@ Two common plans are concrete rather than callback-only:
 Both return an ordinary `ResearchStudyResult`; neither depends on the UI or web
 application.
 
+### Portable study artifacts and comparisons
+
+`StudyArtifactRecord` is the versioned numeric observation contract shared by
+headless studies and the web Research Study service. It records the metric and
+value together with module, subtype, layer/component/token location, example,
+seed, stage, run id, and JSON metadata. `StudyArtifactCollection` groups unique
+records and optionally binds them to a dataset-manifest fingerprint.
+
+`archive_research_study()` combines a `ResearchStudyResult`, its normalized
+artifact collection, manifest, trial exports, and attribution graphs into a
+`ResearchStudyArchive`. `bundle_study_archive()` stores that archive through the
+existing integrity-checked `ResearchRunBundle`; `study_archive_from_bundle()`
+restores and validates the typed archive after loading.
+
+`compare_study_artifacts()` aligns observations by their semantic location and
+method rather than transient artifact ids. It reports matched, appeared, and
+disappeared effects, means and population standard deviations for both runs,
+overall deltas, and paired delta mean/std for identical `(example_id, seed)`
+trials. Manifest compatibility is explicit: `true`, `false`, or unknown when
+either fingerprint is absent.
+
 ## Research Study web API
 
 The additive `POST /api/research/studies/run` endpoint connects the browser UI
@@ -211,6 +232,23 @@ captures only real visualization messages, and aggregates finite numeric
 include every trial export, artifact provenance, mean and population standard
 deviation, and validated dataset/scan stages. Missing, textual, or non-finite
 measurements never become candidates.
+
+The response also includes the same versioned `StudyArtifactCollection` used by
+the headless API, so a browser-created study can be archived or compared without
+reverse-engineering its visualization envelopes.
+
+Three additive JSON endpoints expose the portable workflow without server-side
+path access:
+
+- `POST /api/research/studies/archive` validates a `ResearchStudyArchive` and
+  returns the standard checksummed bundle document.
+- `POST /api/research/studies/restore` verifies a bundle checksum and returns
+  the validated archive payload.
+- `POST /api/research/studies/compare` compares two artifact collections and
+  returns the headless comparison schema.
+
+Clients may download or store the returned JSON themselves. These endpoints do
+not read or write caller-selected server filesystem paths.
 
 The aggregate is also emitted as one table artifact on the caller's original
 client token, so the existing artifact panel renders it without a second output
