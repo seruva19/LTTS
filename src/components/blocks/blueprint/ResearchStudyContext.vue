@@ -5,6 +5,19 @@ import { scrollToLayerByName } from '@/composables/useLayerNavigation'
 
 const research = useResearchStore()
 const selectedCandidate = computed(() => research.candidateForLayer(research.selectedLayerName))
+const selectedComparison = computed(() => research.comparisonForLayer(research.selectedLayerName))
+const selectedResult = computed(() => selectedComparison.value || selectedCandidate.value)
+const selectedLayer = computed(() => selectedComparison.value?.layer_path || selectedCandidate.value?.layerName)
+const selectedValue = computed(() => {
+  if (selectedComparison.value) {
+    const delta = selectedComparison.value.delta
+    return delta === null || delta === undefined
+      ? selectedComparison.value.status
+      : `${delta >= 0 ? '+' : ''}${delta.toFixed(3)}`
+  }
+  const score = selectedCandidate.value?.score
+  return Number.isFinite(score) ? `${score >= 0 ? '+' : ''}${score.toFixed(3)}` : ''
+})
 
 const focusSelection = () => {
   if (research.selectedLayerName) scrollToLayerByName(research.selectedLayerName)
@@ -15,20 +28,20 @@ const focusSelection = () => {
   <section v-if="research.isOpen" class="research-context" aria-label="Active Research Study">
     <div class="research-context-title">
       <VaIcon name="science" size="small" />
-      <strong>{{ research.activeStage === 'scan' ? 'Causal scan' : 'Research Study' }}</strong>
+      <strong>{{ research.activeStage === 'compare' ? 'Run comparison' : research.activeStage === 'scan' ? 'Causal scan' : 'Research Study' }}</strong>
     </div>
     <span class="research-context-copy">
       {{ research.manifest || 'Choose a dataset manifest' }}
       <template v-if="research.manifest"> · {{ research.split }} · {{ research.seeds }} seeds</template>
     </span>
     <button
-      v-if="selectedCandidate"
+      v-if="selectedResult"
       type="button"
       class="research-selection"
       @click="focusSelection"
     >
-      {{ selectedCandidate.layerName }}
-      <strong>{{ selectedCandidate.score >= 0 ? '+' : '' }}{{ selectedCandidate.score.toFixed(3) }}</strong>
+      {{ selectedLayer }}
+      <strong>{{ selectedValue }}</strong>
     </button>
     <button type="button" class="research-context-close" title="Close Research Study" @click="research.close">
       <VaIcon name="close" size="small" />

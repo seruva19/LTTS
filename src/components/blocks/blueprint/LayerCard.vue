@@ -44,7 +44,18 @@ const filterByBreadcrumb = inject('filterByBreadcrumb')
 const isExpanded = computed(() => layerState.isExpanded(props.layer.name))
 const isSelected = computed(() => layerState.isSelected(props.layer.name))
 const researchCandidate = computed(() => research.candidateForLayer(props.layer.name))
+const researchComparison = computed(() => research.comparisonForLayer?.(props.layer.name) || null)
+const researchResult = computed(() => researchComparison.value || researchCandidate.value)
 const isResearchSelected = computed(() => research.selectedLayerName === props.layer.name)
+const researchResultLabel = computed(() => {
+  const result = researchResult.value
+  if (!result) return ''
+  if (researchComparison.value) {
+    if (result.delta === null || result.delta === undefined) return result.status
+    return `${result.delta >= 0 ? '+' : ''}${result.delta.toFixed(3)}`
+  }
+  return `${result.score >= 0 ? '+' : ''}${result.score.toFixed(3)}`
+})
 const isProcessing = computed(() => {
   const layerIndex = getLayerIndex(props.layer)
   return props.currentProcessingLayer === layerIndex && props.isInferenceRunning
@@ -158,7 +169,9 @@ const removeModule = (moduleType, moduleIndex) => {
       'has-modules': layerModuleCount > 0,
       'inference-active': isInferenceRunning,
       'not-attachable': !isAttachable,
-      'research-candidate': Boolean(researchCandidate),
+      'research-candidate': Boolean(researchResult),
+      'research-comparison': Boolean(researchComparison),
+      [`research-${researchComparison?.status || 'candidate'}`]: Boolean(researchResult),
       'research-selected': isResearchSelected
     }"
     :data-layer-name="layer.name"
@@ -227,14 +240,14 @@ const removeModule = (moduleType, moduleIndex) => {
 
       <div class="layer-header-right" @click.stop>
         <button
-          v-if="researchCandidate"
+          v-if="researchResult"
           type="button"
           class="research-candidate-score"
-          title="Select this Research Study candidate"
+          :title="researchComparison ? `Research comparison: ${researchComparison.status}` : 'Select this Research Study candidate'"
           @click.stop="research.selectLayer(layer.name)"
         >
           <VaIcon name="analytics" size="small" />
-          {{ researchCandidate.score >= 0 ? '+' : '' }}{{ researchCandidate.score.toFixed(3) }}
+          {{ researchResultLabel }}
         </button>
         <div class="layer-quick-stats">
           <span v-if="layer.parameters" class="param-count">{{ formatNumber(layer.parameters) }}</span>
@@ -507,6 +520,18 @@ const removeModule = (moduleType, moduleIndex) => {
 .layer-card.research-selected {
   border-color: var(--va-primary);
   box-shadow: inset 0 0 0 1px var(--va-primary);
+}
+
+.layer-card.research-comparison {
+  background: color-mix(in srgb, var(--va-primary) 3%, var(--va-background-element));
+}
+
+.layer-card.research-appeared .research-candidate-score {
+  color: var(--va-success);
+}
+
+.layer-card.research-disappeared .research-candidate-score {
+  color: var(--va-danger);
 }
 
 .research-candidate-score {

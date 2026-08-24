@@ -80,6 +80,11 @@ describe('research study state', () => {
       manifest: { name: 'facts-v1', split: 'test' },
       seeds: [0, 1],
       trials: [{}, {}],
+      artifacts: {
+        schema_version: 1,
+        name: 'facts-v1 study',
+        records: [{ artifact_id: 'one', value: 0.6 }]
+      },
       candidates: [
         { layer: 'transformer.h.7', mean_effect: 0.6, std_effect: 0.1, observations: 2 },
         { layer: 'transformer.h.8', mean_effect: null, observations: 2 }
@@ -90,6 +95,51 @@ describe('research study state', () => {
       expect.objectContaining({ layerName: 'transformer.h.7', score: 0.6, observations: 2 })
     ])
     expect(run).toEqual(expect.objectContaining({ id: 'study-1', trialCount: 2 }))
+    expect(run.artifacts.records[0].artifact_id).toBe('one')
     expect(store.runs).toHaveLength(1)
+  })
+
+  it('compares immutable server runs and maps deltas back to stack layers', () => {
+    const store = useResearchStore()
+    const result = (id, value) => ({
+      study_id: id,
+      created_at: `2026-08-24T00:00:0${id === 'old' ? 0 : 1}Z`,
+      manifest: { name: 'facts-v1', split: 'test' },
+      seeds: [0],
+      trials: [{}],
+      candidates: [{ layer: 'layers.0', mean_effect: value, observations: 1 }],
+      artifacts: { schema_version: 1, name: id, metadata: {}, records: [] }
+    })
+
+    store.ingestStudyResult(result('old', 0.2))
+    store.ingestStudyResult(result('new', 0.5))
+
+    expect(store.baselineRunId).toBe('old')
+    expect(store.candidateRunId).toBe('new')
+    store.ingestComparison({
+      schema_version: 1,
+      baseline_name: 'old',
+      candidate_name: 'new',
+      points: [
+        {
+          layer_path: 'layers.0',
+          status: 'matched',
+          baseline_mean: 0.2,
+          candidate_mean: 0.5,
+          delta: 0.3,
+          matched_trials: 1,
+          paired_delta_std: 0
+        },
+        { layer_path: null, status: 'matched', delta: 99 }
+      ]
+    })
+
+    expect(store.activeStage).toBe('compare')
+    expect(store.comparisonForLayer('layers.0')).toEqual(expect.objectContaining({ delta: 0.3 }))
+    expect(store.comparisonForLayer('model.layers.0')).toEqual(expect.objectContaining({ delta: 0.3 }))
+    expect(store.selectedLayerName).toBe('layers.0')
+    store.clearComparison()
+    expect(store.comparison).toBeNull()
+    expect(store.activeStage).toBe('inspect')
   })
 })

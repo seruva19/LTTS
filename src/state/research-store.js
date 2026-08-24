@@ -27,6 +27,18 @@ const artifactScore = (artifact) => {
 }
 
 const normalizePath = (value) => String(value || '').trim().toLowerCase()
+const cloneSerializable = (value) => value == null ? value : JSON.parse(JSON.stringify(value))
+const pathsMatch = (left, right) => {
+  const first = normalizePath(left)
+  const second = normalizePath(right)
+  return Boolean(first && second && (
+    first === second ||
+    first.endsWith(`.${second}`) ||
+    second.endsWith(`.${first}`) ||
+    first.includes(`.${second}.`) ||
+    second.includes(`.${first}.`)
+  ))
+}
 
 export const useResearchStore = defineStore('research', () => {
   const isOpen = ref(false)
@@ -42,6 +54,9 @@ export const useResearchStore = defineStore('research', () => {
   const candidates = ref([])
   const lastRunAt = ref(null)
   const runs = ref([])
+  const baselineRunId = ref(null)
+  const candidateRunId = ref(null)
+  const comparison = ref(null)
 
   const activeStageIndex = computed(() => STAGES.indexOf(activeStage.value))
   const hasConfiguration = computed(() => manifest.value.trim().length > 0)
@@ -107,10 +122,15 @@ export const useResearchStore = defineStore('research', () => {
     return candidates.value.find(candidate => candidate.layerName === layerName) || null
   }
 
+  function comparisonForLayer(layerName) {
+    return comparison.value?.points?.find(point => pathsMatch(point.layer_path, layerName)) || null
+  }
+
   function resetResults() {
     candidates.value = []
     selectedLayerName.value = null
     lastRunAt.value = null
+    comparison.value = null
   }
 
   function recordRun() {
@@ -154,11 +174,45 @@ export const useResearchStore = defineStore('research', () => {
       split: result?.manifest?.split || split.value,
       seeds: Array.isArray(result?.seeds) ? [...result.seeds] : [],
       candidates: candidates.value.map(candidate => ({ ...candidate })),
-      trialCount: Array.isArray(result?.trials) ? result.trials.length : 0
+      trialCount: Array.isArray(result?.trials) ? result.trials.length : 0,
+      artifacts: cloneSerializable(result?.artifacts || null)
     }
     runs.value.unshift(run)
     runs.value = runs.value.slice(0, 12)
+    candidateRunId.value = run.id
+    if (runs.value.length > 1) baselineRunId.value = runs.value[1].id
     return run
+  }
+
+  function ingestComparison(result) {
+    const points = Array.isArray(result?.points) ? result.points
+      .map(point => ({
+        ...cloneSerializable(point),
+        delta: finiteNumber(point?.delta),
+        baseline_mean: finiteNumber(point?.baseline_mean),
+        candidate_mean: finiteNumber(point?.candidate_mean),
+        paired_delta_std: finiteNumber(point?.paired_delta_std)
+      }))
+      .filter(point => point.layer_path)
+      : []
+    points.sort((left, right) => Math.abs(right.delta ?? 0) - Math.abs(left.delta ?? 0))
+    comparison.value = {
+      ...cloneSerializable(result || {}),
+      points
+    }
+    const first = points[0]
+    if (first?.layer_path) selectedLayerName.value = first.layer_path
+    activeStage.value = 'compare'
+    return comparison.value
+  }
+
+  function clearComparison() {
+    comparison.value = null
+    if (activeStage.value === 'compare') activeStage.value = candidates.value.length ? 'inspect' : 'scan'
+  }
+
+  function runById(runId) {
+    return runs.value.find(run => run.id === runId) || null
   }
 
   return {
@@ -177,6 +231,9 @@ export const useResearchStore = defineStore('research', () => {
     candidates,
     lastRunAt,
     runs,
+    baselineRunId,
+    candidateRunId,
+    comparison,
     hasConfiguration,
     toggle,
     open,
@@ -185,8 +242,12 @@ export const useResearchStore = defineStore('research', () => {
     selectLayer,
     ingestArtifacts,
     candidateForLayer,
+    comparisonForLayer,
     resetResults,
     recordRun,
-    ingestStudyResult
+    ingestStudyResult,
+    ingestComparison,
+    clearComparison,
+    runById
   }
 })

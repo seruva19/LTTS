@@ -12,6 +12,9 @@ const research = useResearchStore()
 const emit = defineEmits(['close'])
 const isStudyRunning = ref(false)
 const runError = ref('')
+const isComparing = ref(false)
+const compareError = ref('')
+const compareExpanded = ref(false)
 
 const layers = computed(() => state.blueprints.loadedBlueprint?.layers || [])
 const maximumLayer = computed(() => Math.max(0, layers.value.length - 1))
@@ -43,12 +46,34 @@ const canRun = computed(() => (
   !state.ws.isInferenceRunning &&
   !isStudyRunning.value
 ))
+const baselineRun = computed(() => research.runById(research.baselineRunId))
+const candidateRun = computed(() => research.runById(research.candidateRunId))
+const canCompare = computed(() => (
+  baselineRun.value?.artifacts &&
+  candidateRun.value?.artifacts &&
+  baselineRun.value.id !== candidateRun.value.id &&
+  !isComparing.value
+))
 const stageLabels = {
   dataset: 'Dataset',
   scan: 'Scan',
   inspect: 'Inspect',
   intervene: 'Intervene',
   compare: 'Compare'
+}
+const normalizeLayerPath = (value) => String(value || '').trim().toLowerCase()
+const resolveLayer = (requestedPath) => {
+  const requested = normalizeLayerPath(requestedPath)
+  return layers.value.find(layer => [layer.name, layer.fullPath, layer.path].some(candidate => {
+    const path = normalizeLayerPath(candidate)
+    return path && (
+      path === requested ||
+      path.endsWith(`.${requested}`) ||
+      requested.endsWith(`.${path}`) ||
+      path.includes(`.${requested}.`) ||
+      requested.includes(`.${path}.`)
+    )
+  })) || null
 }
 
 watch(maximumLayer, (value) => {
@@ -94,10 +119,69 @@ const runStudyStage = async () => {
 }
 
 const inspectCandidate = (candidate) => {
-  research.selectLayer(candidate.layerName)
+  const layer = resolveLayer(candidate.layerName)
+  research.selectLayer(layer?.name || candidate.layerName)
   research.setStage('inspect')
-  state.ui.setSelectedLayer(layers.value.find(layer => layer.name === candidate.layerName) || null)
-  scrollToLayerByName(candidate.layerName)
+  state.ui.setSelectedLayer(layer)
+  scrollToLayerByName(layer?.name || candidate.layerName)
+}
+
+const inspectComparison = (point) => {
+  const layer = resolveLayer(point.layer_path)
+  research.selectLayer(layer?.name || point.layer_path)
+  research.setStage('compare')
+  state.ui.setSelectedLayer(layer)
+  scrollToLayerByName(layer?.name || point.layer_path)
+}
+
+const formatComparisonValue = (value) => {
+  const number = Number(value)
+  return Number.isFinite(number) ? Number(number.toFixed(6)) : null
+}
+
+const compareRuns = async () => {
+  if (!canCompare.value) return
+  isComparing.value = true
+  compareError.value = ''
+  try {
+    const response = await axios.post(`${baseUrl}/api/research/studies/compare`, {
+      baseline: baselineRun.value.artifacts,
+      candidate: candidateRun.value.artifacts,
+      metadata: {
+        baseline_study_id: baselineRun.value.id,
+        candidate_study_id: candidateRun.value.id
+      }
+    })
+    const comparison = research.ingestComparison(response.data)
+    const rows = comparison.points.map(point => [
+      point.layer_path,
+      point.status,
+      formatComparisonValue(point.baseline_mean),
+      formatComparisonValue(point.candidate_mean),
+      formatComparisonValue(point.delta),
+      formatComparisonValue(point.paired_delta_std),
+      point.matched_trials
+    ])
+    state.ws.replayMessage({
+      type: 'visualization',
+      module: 'research_compare',
+      subtype: 'table',
+      data: {
+        type: 'table',
+        headers: ['Layer', 'Status', 'Baseline', 'Candidate', 'Delta', 'Paired σ', 'N'],
+        rows,
+        baseline_study_id: baselineRun.value.id,
+        candidate_study_id: candidateRun.value.id
+      }
+    })
+    compareExpanded.value = true
+    if (comparison.points[0]?.layer_path) inspectCandidate({ layerName: comparison.points[0].layer_path })
+    research.setStage('compare')
+  } catch (error) {
+    compareError.value = error?.response?.data?.detail || error?.message || String(error)
+  } finally {
+    isComparing.value = false
+  }
 }
 </script>
 
@@ -200,16 +284,60 @@ const inspectCandidate = (candidate) => {
       </button>
     </div>
 
-    <div v-if="research.activeStage === 'compare'" class="research-section research-runs">
-      <h3>Recorded runs</h3>
-      <p v-if="research.runs.length === 0">Complete a scan to create a comparable run.</p>
-      <div v-for="run in research.runs" :key="run.id" class="research-run-row">
-        <span>{{ run.manifest }} · {{ run.split }}</span>
-        <strong v-if="run.candidates[0]">
-          {{ run.candidates[0].score >= 0 ? '+' : '' }}{{ run.candidates[0].score.toFixed(3) }}
-        </strong>
+    <details
+      v-if="research.runs.length > 0"
+      class="research-compare"
+      :open="compareExpanded"
+      @toggle="compareExpanded = $event.target.open"
+    >
+      <summary>
+        <span>Compare runs</span>
+        <small>{{ research.runs.length }} saved</small>
+      </summary>
+      <div class="research-compare-body">
+        <p v-if="research.runs.length < 2" class="research-help">
+          Run the study again to create a second comparable result.
+        </p>
+        <template v-else>
+          <label>
+            Baseline run
+            <select v-model="research.baselineRunId">
+              <option v-for="run in research.runs" :key="`baseline-${run.id}`" :value="run.id">
+                {{ run.manifest }} · {{ new Date(run.createdAt).toLocaleTimeString() }}
+              </option>
+            </select>
+          </label>
+          <label>
+            Candidate run
+            <select v-model="research.candidateRunId">
+              <option v-for="run in research.runs" :key="`candidate-${run.id}`" :value="run.id">
+                {{ run.manifest }} · {{ new Date(run.createdAt).toLocaleTimeString() }}
+              </option>
+            </select>
+          </label>
+          <button type="button" class="research-compare-run" :disabled="!canCompare" @click="compareRuns">
+            <VaIcon name="difference" size="small" />
+            {{ isComparing ? 'Comparing…' : 'Compare selected runs' }}
+          </button>
+          <p v-if="baselineRun?.id === candidateRun?.id" class="research-help">Choose two different runs.</p>
+          <p v-if="compareError" class="research-error" role="alert">{{ compareError }}</p>
+          <div v-if="research.comparison?.points?.length" class="research-comparison-results">
+            <button
+              v-for="point in research.comparison.points"
+              :key="`${point.layer_path}:${point.metric}:${point.module}`"
+              type="button"
+              :class="[`status-${point.status}`, { selected: research.selectedLayerName === point.layer_path }]"
+              @click="inspectComparison(point)"
+            >
+              <span>{{ point.layer_path }}</span>
+              <small>{{ point.status }}</small>
+              <strong v-if="point.delta !== null">{{ point.delta >= 0 ? '+' : '' }}{{ point.delta.toFixed(3) }}</strong>
+              <strong v-else>—</strong>
+            </button>
+          </div>
+        </template>
       </div>
-    </div>
+    </details>
   </section>
 </template>
 
@@ -237,8 +365,23 @@ const inspectCandidate = (candidate) => {
 .research-results button.selected { border-color: var(--va-primary); background: color-mix(in srgb, var(--va-primary) 7%, var(--va-background-primary)); }
 .research-results button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .research-results button strong { margin-left: auto; color: var(--va-primary); font-size: 0.7rem; }
-.research-runs p { color: var(--va-text-secondary); font-size: 0.68rem; line-height: 1.4; }
-.research-run-row { display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0; border-top: 1px solid var(--va-background-border); font-size: 0.68rem; }
-.research-run-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.research-run-row strong { margin-left: auto; color: var(--va-primary); }
+.research-compare { border-top: 1px solid var(--va-background-border); margin-top: 0.7rem; }
+.research-compare summary { display: flex; align-items: center; gap: 0.4rem; padding: 0.7rem 0; cursor: pointer; font-size: 0.75rem; font-weight: 600; list-style: none; }
+.research-compare summary::-webkit-details-marker { display: none; }
+.research-compare summary::before { content: '›'; color: var(--va-text-secondary); font-size: 1rem; transform: rotate(0); transition: transform 120ms ease; }
+.research-compare[open] summary::before { transform: rotate(90deg); }
+.research-compare summary small { margin-left: auto; color: var(--va-text-secondary); font-size: 0.64rem; font-weight: 400; }
+.research-compare-body { padding: 0 0 0.2rem 0.75rem; border-left: 1px solid var(--va-background-border); }
+.research-compare-body label { display: grid; gap: 0.25rem; margin-top: 0.5rem; color: var(--va-text-secondary); font-size: 0.68rem; }
+.research-compare-body select { width: 100%; border: 1px solid var(--va-background-border); border-radius: 2px; background: var(--va-background-secondary); color: var(--va-text-primary); padding: 0.4rem 0.45rem; font: inherit; }
+.research-compare-run { display: flex; align-items: center; justify-content: center; gap: 0.3rem; width: 100%; margin-top: 0.6rem; border: 1px solid var(--va-background-border); border-radius: 2px; background: var(--va-background-secondary); color: var(--va-text-primary); padding: 0.45rem; cursor: pointer; }
+.research-compare-run:disabled { opacity: 0.5; cursor: not-allowed; }
+.research-comparison-results { margin-top: 0.6rem; }
+.research-comparison-results button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 0.35rem; border: 0; border-top: 1px solid var(--va-background-border); border-radius: 0; background: transparent; color: var(--va-text-primary); padding: 0.45rem 0.2rem; cursor: pointer; text-align: left; }
+.research-comparison-results button.selected { background: color-mix(in srgb, var(--va-primary) 7%, transparent); }
+.research-comparison-results span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-comparison-results small { color: var(--va-text-secondary); font-size: 0.6rem; }
+.research-comparison-results strong { font-size: 0.68rem; color: var(--va-primary); }
+.research-comparison-results .status-appeared strong { color: var(--va-success); }
+.research-comparison-results .status-disappeared strong { color: var(--va-danger); }
 </style>
