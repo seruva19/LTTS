@@ -6,9 +6,14 @@ import { scrollToLayerByName } from '@/composables/useLayerNavigation'
 const research = useResearchStore()
 const selectedCandidate = computed(() => research.candidateForLayer(research.selectedLayerName))
 const selectedComparison = computed(() => research.comparisonForLayer(research.selectedLayerName))
-const selectedResult = computed(() => selectedComparison.value || selectedCandidate.value)
-const selectedLayer = computed(() => selectedComparison.value?.layer_path || selectedCandidate.value?.layerName)
+const selectedCausal = computed(() => research.causalForLayer(research.selectedLayerName))
+const selectedResult = computed(() => selectedCausal.value || selectedComparison.value || selectedCandidate.value)
+const selectedLayer = computed(() => selectedCausal.value?.layer || selectedComparison.value?.layer_path || selectedCandidate.value?.layerName)
 const selectedValue = computed(() => {
+  if (selectedCausal.value) {
+    const delta = selectedCausal.value.delta_from_baseline
+    return `${delta >= 0 ? '+' : ''}${delta.toFixed(3)}`
+  }
   if (selectedComparison.value) {
     const delta = selectedComparison.value.delta
     return delta === null || delta === undefined
@@ -28,7 +33,7 @@ const focusSelection = () => {
   <section v-if="research.isOpen" class="research-context" aria-label="Active Research Study">
     <div class="research-context-title">
       <VaIcon name="science" size="small" />
-      <strong>{{ research.activeStage === 'compare' ? 'Run comparison' : research.activeStage === 'scan' ? 'Causal scan' : 'Research Study' }}</strong>
+      <strong>{{ research.activeStage === 'compare' ? 'Run comparison' : research.activeStage === 'intervene' ? 'Causal scan' : 'Research Study' }}</strong>
     </div>
     <span class="research-context-copy">
       {{ research.manifest || 'Choose a dataset manifest' }}

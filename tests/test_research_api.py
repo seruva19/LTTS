@@ -14,6 +14,7 @@ from ltts_engine import (
     archive_research_study,
 )
 from scripts.services.research_study import CapturedTrial, ResearchStudyService
+from scripts.services.causal_scan import CausalScanService
 from scripts.messages.message_bus import MessageBus
 
 
@@ -29,8 +30,94 @@ def test_research_route_is_registered():
         "/api/research/studies/archive",
         "/api/research/studies/restore",
         "/api/research/studies/compare",
+        "/api/research/causal-scan",
     ):
         assert (path, "POST") in routes
+
+
+def test_causal_scan_pairs_seeds_moves_only_the_intervention_and_emits_one_heatmap():
+    async def scenario():
+        published = []
+
+        class Bus:
+            async def publish(self, token, message):
+                published.append((token, message))
+
+        service = CausalScanService(SimpleNamespace(message_bus=Bus()))
+        calls = []
+
+        async def fake_trial(**kwargs):
+            calls.append(kwargs)
+            modules = kwargs["modules"] or {}
+            intervention_layer = next(
+                (
+                    path
+                    for path, specs in modules.items()
+                    if any(
+                        (spec if isinstance(spec, str) else spec.get("name")) == "neuron_ablation"
+                        for spec in specs
+                    )
+                ),
+                None,
+            )
+            value = {None: 1.0, "layers.0": 1.5, "layers.1": 0.5}[intervention_layer]
+            return CapturedTrial(
+                example_id="current-prompt",
+                seed=kwargs["seed"],
+                response={"status": "success"},
+                artifacts=(
+                    {
+                        "type": "visualization",
+                        "module": "activation_anisotropy",
+                        "subtype": "scalar",
+                        "layer_path": "layers.0",
+                        "data": {"value": value},
+                    },
+                ),
+            )
+
+        service.study._run_trial = fake_trial
+        original_modules = {
+            "layers.0": [
+                {"name": "activation_anisotropy", "parameters": {}},
+                {
+                    "name": "neuron_ablation",
+                    "parameters": {"enabled": True, "neuron_indices": "0"},
+                },
+            ]
+        }
+        result = await service.run(
+            model_id="debug/dummy",
+            prompt="hello",
+            layers=["layers.0", "layers.1"],
+            seeds=[3, 7],
+            parameters={},
+            modules=original_modules,
+            intervention={
+                "name": "neuron_ablation",
+                "parameters": {"enabled": True, "neuron_indices": "0"},
+            },
+            measurement_module="activation_anisotropy",
+            metric="value",
+            client_token="browser",
+        )
+
+        assert [point["delta_from_baseline"] for point in result["points"]] == [0.5, -0.5]
+        assert len(calls) == 6
+        assert all(
+            all(
+                (spec if isinstance(spec, str) else spec.get("name")) != "neuron_ablation"
+                for specs in calls[index]["modules"].values()
+                for spec in specs
+            )
+            for index in (0, 1)
+        )
+        assert original_modules["layers.0"][1]["parameters"].get("layer_path") is None
+        assert len(published) == 1
+        assert published[0][1]["module"] == "causal_scan"
+        assert published[0][1]["data"]["values"] == [[0.5, 0.5], [-0.5, -0.5]]
+
+    asyncio.run(scenario())
 
 
 def test_research_contract_rejects_duplicate_examples_and_seeds():

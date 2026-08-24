@@ -154,4 +154,72 @@ describe('Research Study run comparison', () => {
     )
     expect(wrapper.text()).toContain('+0.300')
   })
+
+  it('keeps causal scan collapsed and submits a paired intervention sweep', async () => {
+    const layer = globalThis.__LTTS_RESEARCH_TEST_STATE__.blueprints.loadedBlueprint.layers[0]
+    layer.postModules = [
+      {
+        name: 'activation_anisotropy',
+        parameters: { emit_scalar: true }
+      },
+      {
+        name: 'neuron_ablation',
+        parameters: { enabled: true, neuron_indices: '0' }
+      }
+    ]
+    globalThis.__LTTS_RESEARCH_TEST_STATE__.modules.modules = {
+      activation_anisotropy: {
+        metadata: { description: 'Activation metric', event_types: ['layer_after'] }
+      },
+      neuron_ablation: {
+        metadata: { description: 'Causal ablation intervention', event_types: ['layer_after'] }
+      }
+    }
+    axios.post.mockResolvedValue({
+      data: {
+        schema_version: 1,
+        scan_id: 'scan-1',
+        metric: 'value',
+        points: [
+          {
+            layer: 'model.layers.0',
+            score: 1.2,
+            delta_from_baseline: 0.2,
+            delta_std: 0,
+            observations: 1,
+            seed_deltas: [{ seed: 0, delta: 0.2 }]
+          }
+        ]
+      }
+    })
+
+    const wrapper = mount(ResearchStudyPanel, {
+      global: { stubs: { VaIcon: { template: '<i />' } } }
+    })
+    const details = wrapper.get('details.research-causal-scan')
+    expect(details.attributes('open')).toBeUndefined()
+    details.element.open = true
+    await details.trigger('toggle')
+
+    const button = details.get('button.research-compare-run')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(axios.post).toHaveBeenCalledWith(
+      expect.stringContaining('/api/research/causal-scan'),
+      expect.objectContaining({
+        layers: ['model.layers.0'],
+        intervention: expect.objectContaining({
+          name: 'neuron_ablation',
+          parameters: expect.objectContaining({ enabled: true, neuron_indices: '0' })
+        }),
+        measurement_module: 'activation_anisotropy',
+        metric: 'value'
+      })
+    )
+    expect(useResearchStore().causalForLayer('layers.0').delta_from_baseline).toBe(0.2)
+    expect(wrapper.text()).toContain('+0.200')
+    expect(globalThis.__LTTS_RESEARCH_TEST_STATE__.ws.replayMessage).not.toHaveBeenCalled()
+  })
 })

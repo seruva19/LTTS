@@ -142,4 +142,24 @@ describe('research study state', () => {
     expect(store.comparison).toBeNull()
     expect(store.activeStage).toBe('inspect')
   })
+
+  it('maps a causal sweep to stack layers and normalizes effect intensity', () => {
+    const store = useResearchStore()
+    const scan = store.ingestCausalScan({
+      scan_id: 'scan-1',
+      metric: 'value',
+      points: [
+        { layer: 'model.layers.0', score: 1.5, delta_from_baseline: 0.5, delta_std: 0.1 },
+        { layer: 'model.layers.1', score: 0.75, delta_from_baseline: -0.25, delta_std: 0 }
+      ]
+    })
+
+    expect(scan.points[0].intensity).toBe(1)
+    expect(scan.points[1].intensity).toBe(0.5)
+    expect(store.causalForLayer('layers.0')).toEqual(expect.objectContaining({
+      delta_from_baseline: 0.5
+    }))
+    expect(store.selectedLayerName).toBe('model.layers.0')
+    expect(store.activeStage).toBe('intervene')
+  })
 })

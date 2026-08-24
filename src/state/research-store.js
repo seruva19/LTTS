@@ -57,6 +57,7 @@ export const useResearchStore = defineStore('research', () => {
   const baselineRunId = ref(null)
   const candidateRunId = ref(null)
   const comparison = ref(null)
+  const causalScan = ref(null)
 
   const activeStageIndex = computed(() => STAGES.indexOf(activeStage.value))
   const hasConfiguration = computed(() => manifest.value.trim().length > 0)
@@ -126,11 +127,16 @@ export const useResearchStore = defineStore('research', () => {
     return comparison.value?.points?.find(point => pathsMatch(point.layer_path, layerName)) || null
   }
 
+  function causalForLayer(layerName) {
+    return causalScan.value?.points?.find(point => pathsMatch(point.layer, layerName)) || null
+  }
+
   function resetResults() {
     candidates.value = []
     selectedLayerName.value = null
     lastRunAt.value = null
     comparison.value = null
+    causalScan.value = null
   }
 
   function recordRun() {
@@ -211,6 +217,35 @@ export const useResearchStore = defineStore('research', () => {
     if (activeStage.value === 'compare') activeStage.value = candidates.value.length ? 'inspect' : 'scan'
   }
 
+  function ingestCausalScan(result) {
+    const rawPoints = Array.isArray(result?.points) ? result.points : []
+    const points = rawPoints
+      .map(point => ({
+        ...cloneSerializable(point),
+        score: finiteNumber(point?.score),
+        delta_from_baseline: finiteNumber(point?.delta_from_baseline),
+        delta_std: finiteNumber(point?.delta_std) ?? 0
+      }))
+      .filter(point => point.layer && point.delta_from_baseline !== null)
+    const maximum = Math.max(0, ...points.map(point => Math.abs(point.delta_from_baseline)))
+    for (const point of points) {
+      point.intensity = maximum > 0 ? Math.abs(point.delta_from_baseline) / maximum : 0
+    }
+    causalScan.value = { ...cloneSerializable(result || {}), points }
+    comparison.value = null
+    const strongest = [...points].sort(
+      (left, right) => Math.abs(right.delta_from_baseline) - Math.abs(left.delta_from_baseline)
+    )[0]
+    if (strongest?.layer) selectedLayerName.value = strongest.layer
+    activeStage.value = 'intervene'
+    return causalScan.value
+  }
+
+  function clearCausalScan() {
+    causalScan.value = null
+    if (activeStage.value === 'intervene') activeStage.value = candidates.value.length ? 'inspect' : 'scan'
+  }
+
   function runById(runId) {
     return runs.value.find(run => run.id === runId) || null
   }
@@ -234,6 +269,7 @@ export const useResearchStore = defineStore('research', () => {
     baselineRunId,
     candidateRunId,
     comparison,
+    causalScan,
     hasConfiguration,
     toggle,
     open,
@@ -243,11 +279,14 @@ export const useResearchStore = defineStore('research', () => {
     ingestArtifacts,
     candidateForLayer,
     comparisonForLayer,
+    causalForLayer,
     resetResults,
     recordRun,
     ingestStudyResult,
     ingestComparison,
     clearComparison,
+    ingestCausalScan,
+    clearCausalScan,
     runById
   }
 })

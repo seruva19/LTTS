@@ -282,10 +282,16 @@ const heatmapGridStyle = (data) => ({
   gridTemplateColumns: `repeat(${Math.min(data?.dimensions?.cols || data?.values?.[0]?.length || 8, 32)}, 1fr)`
 })
 
-const heatmapColor = (value, values) => {
+const heatmapColor = (value, values, colorScale = '') => {
   if (typeof value !== 'number' || !Array.isArray(values)) return 'var(--va-background-element)'
   const flat = values.flat().filter(Number.isFinite)
   if (!flat.length) return 'var(--va-background-element)'
+  if (colorScale === 'diverging_zero') {
+    const extent = Math.max(...flat.map(item => Math.abs(item))) || 1
+    const strength = Math.min(1, Math.abs(value) / extent)
+    const mix = Math.round(245 - strength * 165)
+    return value < 0 ? `rgb(${mix}, ${mix}, 255)` : `rgb(255, ${mix}, ${mix})`
+  }
   const min = Math.min(...flat)
   const range = Math.max(...flat) - min || 1
   const normalized = (value - min) / range
@@ -511,15 +517,26 @@ onUnmounted(() => {
           <thead><tr><th v-for="header in previewTable(selectedEvent).headers" :key="header">{{ header }}</th></tr></thead>
           <tbody><tr v-for="(row, rowIndex) in previewTable(selectedEvent).rows" :key="rowIndex"><td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td></tr></tbody>
         </table>
-        <div v-else-if="previewHeatmap(selectedEvent)" class="artifact-heatmap" :style="heatmapGridStyle(previewHeatmap(selectedEvent))">
-          <template v-for="(row, rowIndex) in previewHeatmap(selectedEvent).values.slice(0, 32)" :key="rowIndex">
-            <span
-              v-for="(cell, cellIndex) in row.slice(0, 32)"
-              :key="cellIndex"
-              :style="{ backgroundColor: heatmapColor(cell, previewHeatmap(selectedEvent).values) }"
-              :title="`[${rowIndex},${cellIndex}]: ${cell}`"
-            />
-          </template>
+        <div v-else-if="previewHeatmap(selectedEvent)" class="artifact-heatmap-frame">
+          <div v-if="previewHeatmap(selectedEvent).column_labels?.length" class="artifact-heatmap-columns">
+            {{ previewHeatmap(selectedEvent).column_labels.slice(0, 32).join(' · ') }}
+          </div>
+          <div class="artifact-heatmap" :style="heatmapGridStyle(previewHeatmap(selectedEvent))">
+            <template v-for="(row, rowIndex) in previewHeatmap(selectedEvent).values.slice(0, 32)" :key="rowIndex">
+              <span
+                v-for="(cell, cellIndex) in row.slice(0, 32)"
+                :key="cellIndex"
+                :style="{ backgroundColor: heatmapColor(cell, previewHeatmap(selectedEvent).values, previewHeatmap(selectedEvent).color_scale) }"
+                :title="`${previewHeatmap(selectedEvent).row_labels?.[rowIndex] || rowIndex} · ${previewHeatmap(selectedEvent).column_labels?.[cellIndex] || cellIndex}: ${cell}`"
+              />
+            </template>
+          </div>
+          <div v-if="previewHeatmap(selectedEvent).row_labels?.length" class="artifact-heatmap-rows">
+            <div v-for="(label, index) in previewHeatmap(selectedEvent).row_labels.slice(0, 32)" :key="label">
+              <code>{{ label }}</code>
+              <span>{{ previewHeatmap(selectedEvent).values[index]?.map(value => Number(value).toFixed(4)).join(' · ') }}</span>
+            </div>
+          </div>
         </div>
         <pre v-else-if="previewText(selectedEvent) !== null" class="artifact-text">{{ previewText(selectedEvent) }}</pre>
         <template v-else>{{ formatPreview(selectedEvent) }}</template>
@@ -577,6 +594,12 @@ onUnmounted(() => {
   min-height: 140px;
 }
 .artifact-heatmap span { min-width: 3px; min-height: 3px; }
+.artifact-heatmap-frame { display: grid; gap: 0.45rem; }
+.artifact-heatmap-columns { color: var(--va-text-secondary); font-size: 0.65rem; text-align: right; }
+.artifact-heatmap-rows { display: grid; gap: 0.25rem; font-size: 0.65rem; }
+.artifact-heatmap-rows div { display: flex; justify-content: space-between; gap: 0.5rem; border-top: 1px solid var(--va-background-border); padding-top: 0.25rem; }
+.artifact-heatmap-rows code { overflow: hidden; text-overflow: ellipsis; }
+.artifact-heatmap-rows span { color: var(--va-text-secondary); white-space: nowrap; }
 .artifact-text {
   margin: 0;
   white-space: pre-wrap;

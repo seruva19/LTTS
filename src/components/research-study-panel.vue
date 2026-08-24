@@ -15,6 +15,12 @@ const runError = ref('')
 const isComparing = ref(false)
 const compareError = ref('')
 const compareExpanded = ref(false)
+const causalExpanded = ref(false)
+const isCausalRunning = ref(false)
+const causalError = ref('')
+const causalIntervention = ref('')
+const causalMeasurement = ref('')
+const causalMetric = ref('value')
 
 const layers = computed(() => state.blueprints.loadedBlueprint?.layers || [])
 const maximumLayer = computed(() => Math.max(0, layers.value.length - 1))
@@ -39,6 +45,45 @@ const scopedModules = computed(() => {
   )))
 })
 const hasAttachedAnalysis = computed(() => Object.values(scopedModules.value).some(items => items.length > 0))
+const attachedSpecs = computed(() => Object.entries(scopedModules.value).flatMap(([path, specs]) => (
+  (specs || []).map(spec => ({
+    path,
+    name: typeof spec === 'string' ? spec : spec?.name,
+    parameters: typeof spec === 'string' ? {} : { ...(spec?.parameters || {}) }
+  })).filter(spec => spec.name)
+)))
+const uniqueSpecs = (specs) => [...new Map(specs.map(spec => [spec.name, spec])).values()]
+const interventionOptions = computed(() => uniqueSpecs(attachedSpecs.value.filter(spec => {
+  const moduleInfo = state.modules.modules?.[spec.name] || {}
+  const metadata = moduleInfo.metadata || moduleInfo
+  const description = `${spec.name} ${metadata.description || ''}`.toLowerCase()
+  const eventTypes = metadata.event_types || metadata.eventTypes || []
+  return eventTypes.some(type => String(type).startsWith('layer_')) &&
+    /(ablat|steer|intervention|control.vector|patch)/.test(description)
+})))
+const measurementOptions = computed(() => uniqueSpecs(
+  attachedSpecs.value.filter(spec => spec.name !== causalIntervention.value)
+))
+const selectedIntervention = computed(() => interventionOptions.value.find(
+  spec => spec.name === causalIntervention.value
+) || null)
+const causalLayerTargets = computed(() => {
+  const start = Math.max(0, Math.min(Number(research.layerStart) || 0, Number(research.layerEnd) || 0))
+  const end = Math.min(maximumLayer.value, Math.max(Number(research.layerStart) || 0, Number(research.layerEnd) || 0))
+  return layers.value.slice(start, end + 1)
+    .filter(layer => layer.attachable !== false)
+    .map(layer => layer.fullPath || layer.name || layer.path)
+    .filter(Boolean)
+})
+const canRunCausal = computed(() => Boolean(
+  selectedIntervention.value &&
+  causalMeasurement.value &&
+  causalMetric.value.trim() &&
+  causalLayerTargets.value.length > 0 &&
+  !state.ws.isInferenceRunning &&
+  !isStudyRunning.value &&
+  !isCausalRunning.value
+))
 const canRun = computed(() => (
   research.hasConfiguration &&
   layers.value.length > 0 &&
@@ -78,6 +123,18 @@ const resolveLayer = (requestedPath) => {
 
 watch(maximumLayer, (value) => {
   if (research.layerEnd === null || research.layerEnd > value) research.layerEnd = value
+}, { immediate: true })
+
+watch(interventionOptions, (options) => {
+  if (!options.some(option => option.name === causalIntervention.value)) {
+    causalIntervention.value = options[0]?.name || ''
+  }
+}, { immediate: true })
+
+watch(measurementOptions, (options) => {
+  if (!options.some(option => option.name === causalMeasurement.value)) {
+    causalMeasurement.value = options[0]?.name || ''
+  }
 }, { immediate: true })
 
 watch(
@@ -132,6 +189,48 @@ const inspectComparison = (point) => {
   research.setStage('compare')
   state.ui.setSelectedLayer(layer)
   scrollToLayerByName(layer?.name || point.layer_path)
+}
+
+const inspectCausalPoint = (point) => {
+  const layer = resolveLayer(point.layer)
+  research.selectLayer(layer?.name || point.layer)
+  research.setStage('intervene')
+  state.ui.setSelectedLayer(layer)
+  scrollToLayerByName(layer?.name || point.layer)
+}
+
+const runCausalScan = async () => {
+  if (!canRunCausal.value) return
+  isCausalRunning.value = true
+  causalError.value = ''
+  research.clearCausalScan()
+  try {
+    const seedCount = Math.max(1, Math.min(16, Number(research.seeds) || 1))
+    const response = await axios.post(`${baseUrl}/api/research/causal-scan`, {
+      model_id: state.blueprints.loadedBlueprint.source?.id,
+      prompt: state.ui.userPrompt,
+      layers: causalLayerTargets.value,
+      seeds: Array.from({ length: seedCount }, (_, index) => index),
+      parameters: { force_eager_attention: true },
+      modules: scopedModules.value,
+      intervention: {
+        name: selectedIntervention.value.name,
+        parameters: { ...selectedIntervention.value.parameters }
+      },
+      measurement_module: causalMeasurement.value,
+      metric: causalMetric.value.trim(),
+      client_token: state.ws.clientToken
+    })
+    const scan = research.ingestCausalScan(response.data)
+    const strongest = [...scan.points].sort(
+      (left, right) => Math.abs(right.delta_from_baseline) - Math.abs(left.delta_from_baseline)
+    )[0]
+    if (strongest) inspectCausalPoint(strongest)
+  } catch (error) {
+    causalError.value = error?.response?.data?.detail || error?.message || String(error)
+  } finally {
+    isCausalRunning.value = false
+  }
 }
 
 const formatComparisonValue = (value) => {
@@ -285,6 +384,74 @@ const compareRuns = async () => {
     </div>
 
     <details
+      class="research-compare research-causal-scan"
+      :open="causalExpanded"
+      @toggle="causalExpanded = $event.target.open"
+    >
+      <summary>
+        <span>Causal scan</span>
+        <small>{{ research.causalScan?.points?.length || 0 }} layers</small>
+      </summary>
+      <div class="research-compare-body">
+        <template v-if="interventionOptions.length > 0">
+          <label>
+            Baseline
+            <select disabled>
+              <option>Same prompt and seed, intervention off</option>
+            </select>
+          </label>
+          <label>
+            Intervention module
+            <select v-model="causalIntervention">
+              <option v-for="option in interventionOptions" :key="option.name" :value="option.name">
+                {{ option.name }}
+              </option>
+            </select>
+          </label>
+          <label>
+            Measurement module
+            <select v-model="causalMeasurement">
+              <option v-for="option in measurementOptions" :key="option.name" :value="option.name">
+                {{ option.name }}
+              </option>
+            </select>
+          </label>
+          <label>
+            Numeric metric key
+            <input v-model.trim="causalMetric" type="text" placeholder="value">
+          </label>
+          <button type="button" class="research-compare-run" :disabled="!canRunCausal" @click="runCausalScan">
+            <VaIcon name="experiment" size="small" />
+            {{ isCausalRunning ? 'Scanning layers…' : 'Run paired causal scan' }}
+          </button>
+          <p class="research-help">
+            Uses identical seeds for the intervention-off baseline and every layer. Configure and enable the intervention on its attached layer first.
+          </p>
+          <p v-if="measurementOptions.length === 0" class="research-error" role="alert">
+            Attach a separate diagnostic module that emits a numeric scalar.
+          </p>
+          <p v-if="causalError" class="research-error" role="alert">{{ causalError }}</p>
+          <div v-if="research.causalScan?.points?.length" class="research-comparison-results">
+            <button
+              v-for="point in research.causalScan.points"
+              :key="point.layer"
+              type="button"
+              :class="{ selected: research.selectedLayerName === point.layer }"
+              @click="inspectCausalPoint(point)"
+            >
+              <span>{{ point.layer }}</span>
+              <small>σ {{ point.delta_std.toFixed(3) }}</small>
+              <strong>{{ point.delta_from_baseline >= 0 ? '+' : '' }}{{ point.delta_from_baseline.toFixed(3) }}</strong>
+            </button>
+          </div>
+        </template>
+        <p v-else class="research-help">
+          Attach and configure a layer intervention such as neuron_ablation or neuron_activation_steering.
+        </p>
+      </div>
+    </details>
+
+    <details
       v-if="research.runs.length > 0"
       class="research-compare"
       :open="compareExpanded"
@@ -374,6 +541,7 @@ const compareRuns = async () => {
 .research-compare-body { padding: 0 0 0.2rem 0.75rem; border-left: 1px solid var(--va-background-border); }
 .research-compare-body label { display: grid; gap: 0.25rem; margin-top: 0.5rem; color: var(--va-text-secondary); font-size: 0.68rem; }
 .research-compare-body select { width: 100%; border: 1px solid var(--va-background-border); border-radius: 2px; background: var(--va-background-secondary); color: var(--va-text-primary); padding: 0.4rem 0.45rem; font: inherit; }
+.research-compare-body input { width: 100%; border: 1px solid var(--va-background-border); border-radius: 2px; background: var(--va-background-secondary); color: var(--va-text-primary); padding: 0.4rem 0.45rem; font: inherit; }
 .research-compare-run { display: flex; align-items: center; justify-content: center; gap: 0.3rem; width: 100%; margin-top: 0.6rem; border: 1px solid var(--va-background-border); border-radius: 2px; background: var(--va-background-secondary); color: var(--va-text-primary); padding: 0.45rem; cursor: pointer; }
 .research-compare-run:disabled { opacity: 0.5; cursor: not-allowed; }
 .research-comparison-results { margin-top: 0.6rem; }

@@ -14,6 +14,7 @@ from ltts_engine import (
     study_archive_from_bundle,
 )
 from scripts.services.research_study import ResearchStudyService
+from scripts.services.causal_scan import CausalScanService
 
 
 class ResearchExampleInput(BaseModel):
@@ -71,6 +72,34 @@ class ResearchComparisonInput(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class CausalScanInput(BaseModel):
+    model_id: str = Field(..., min_length=1, max_length=256)
+    prompt: str = Field(..., min_length=1, max_length=100_000)
+    layers: List[str] = Field(..., min_length=1, max_length=256)
+    seeds: List[int] = Field(default_factory=lambda: [0], min_length=1, max_length=16)
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    modules: Optional[Dict[str, List[Union[str, Dict[str, Any]]]]] = None
+    intervention: Dict[str, Any]
+    measurement_module: str = Field(..., min_length=1, max_length=256)
+    metric: str = Field("value", min_length=1, max_length=128)
+    client_token: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("layers")
+    @classmethod
+    def validate_layers(cls, layers: List[str]) -> List[str]:
+        normalized = [layer.strip() for layer in layers]
+        if any(not layer for layer in normalized) or len(normalized) != len(set(normalized)):
+            raise ValueError("Causal scan layers must be unique non-empty paths")
+        return normalized
+
+    @field_validator("seeds")
+    @classmethod
+    def validate_causal_seeds(cls, seeds: List[int]) -> List[int]:
+        if len(seeds) != len(set(seeds)) or any(seed < 0 or seed > 2**32 - 1 for seed in seeds):
+            raise ValueError("Causal scan seeds must be unique uint32 values")
+        return seeds
+
+
 def _unprocessable(operation):
     try:
         return operation()
@@ -81,6 +110,7 @@ def _unprocessable(operation):
 def create_research_router(context):
     router = APIRouter()
     service = ResearchStudyService(context)
+    causal_scan = CausalScanService(context)
 
     @router.post("/api/research/studies/run")
     async def run_research_study(input: ResearchStudyInput):
@@ -117,6 +147,21 @@ def create_research_router(context):
                 StudyArtifactCollection.from_dict(input.candidate),
                 metadata=input.metadata,
             ).to_dict()
+        )
+
+    @router.post("/api/research/causal-scan")
+    async def run_causal_scan(input: CausalScanInput):
+        return await causal_scan.run(
+            model_id=input.model_id,
+            prompt=input.prompt,
+            layers=input.layers,
+            seeds=input.seeds,
+            parameters=input.parameters,
+            modules=input.modules,
+            intervention=input.intervention,
+            measurement_module=input.measurement_module,
+            metric=input.metric,
+            client_token=input.client_token or "default",
         )
 
     return router
