@@ -209,6 +209,45 @@ sets. Its measured full/circuit effects and fidelity are stored separately from
 the graph-based estimate. This keeps circuit extraction useful headlessly
 without treating attribution weights alone as causal validation.
 
+### Training-free recirculation
+
+`RecirculationRunner` implements a reference sequential prefill for decoder-only
+causal language models. A `RecirculationSpec` names a deep source and shallower
+destination residual boundary, mixing coefficient, optional explicit beta,
+L2/no normalization, and an optional early-token ramp. Each token is first
+processed normally; its mixed destination state is then exposed while later
+tokens are processed. Baseline and recirculated next-token likelihoods are
+paired on the same input and returned as finite per-token NLL and perplexity.
+`discover_recirculation_layers()` locates the model's longest ordered decoder
+block list and returns explicit compatible layer paths; unsupported structures
+receive a reason instead of failing later during an experiment.
+
+The implementation follows Michael C. Mozer, Shoaib Ahmed Siddiqui, Danny
+Sawyer, Sunny Sanyal, and Rosanne Liu, ["Recirculation"
+(2026)](https://arxiv.org/abs/2608.17981). LTTS provides an independent
+PyTorch/Hugging Face reference implementation; it does not include or claim the
+authors' source code.
+
+`sweep()` evaluates an explicit, unique source/destination/coefficient grid and
+selects the lowest measured perplexity while checking that every trial retained
+the identical baseline. The result is versioned and JSON-safe. This reference
+executor disables KV caching and recomputes prefixes for clarity and broad
+Hugging Face compatibility; an optimized architecture adapter can preserve the
+same result contract without changing research records.
+
+`evaluate_dataset()` aggregates NLL by predicted-token count rather than giving
+short and long documents equal weight. `sweep_dataset()` applies the same
+explicit search space to all examples and retains each per-example result for
+audit and stability analysis.
+`recirculation_sweep_heatmap()` converts a complete fixed-parameter
+source-by-destination grid into the existing labeled, zero-centered heatmap
+payload. It rejects ambiguous or incomplete grids instead of inventing cells.
+
+`generate()` performs paired deterministic greedy decoding and stores both token
+trajectories plus every changed generated position. It uses the same sequential
+state rule as likelihood evaluation, so generation can be tested without the
+web application or an artifact renderer.
+
 ### Portable study artifacts and comparisons
 
 `StudyArtifactRecord` is the versioned numeric observation contract shared by
