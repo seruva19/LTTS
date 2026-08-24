@@ -22,6 +22,11 @@ const props = defineProps({
 })
 
 const state = useLttsState()
+const research = state.research || {
+  selectedLayerName: null,
+  candidateForLayer: () => null,
+  selectLayer: () => {}
+}
 const { formatNumber, formatMemory, getLayerTypeInfo } = useLayerFormatting()
 const layerState = inject('layerState')
 const architectureContext = inject('architectureContext', computed(() => ({
@@ -38,6 +43,8 @@ const filterByBreadcrumb = inject('filterByBreadcrumb')
 
 const isExpanded = computed(() => layerState.isExpanded(props.layer.name))
 const isSelected = computed(() => layerState.isSelected(props.layer.name))
+const researchCandidate = computed(() => research.candidateForLayer(props.layer.name))
+const isResearchSelected = computed(() => research.selectedLayerName === props.layer.name)
 const isProcessing = computed(() => {
   const layerIndex = getLayerIndex(props.layer)
   return props.currentProcessingLayer === layerIndex && props.isInferenceRunning
@@ -150,7 +157,9 @@ const removeModule = (moduleType, moduleIndex) => {
       'processing': isProcessing,
       'has-modules': layerModuleCount > 0,
       'inference-active': isInferenceRunning,
-      'not-attachable': !isAttachable
+      'not-attachable': !isAttachable,
+      'research-candidate': Boolean(researchCandidate),
+      'research-selected': isResearchSelected
     }"
     :data-layer-name="layer.name"
     :data-layer-id="layer.id"
@@ -217,6 +226,16 @@ const removeModule = (moduleType, moduleIndex) => {
       </div>
 
       <div class="layer-header-right" @click.stop>
+        <button
+          v-if="researchCandidate"
+          type="button"
+          class="research-candidate-score"
+          title="Select this Research Study candidate"
+          @click.stop="research.selectLayer(layer.name)"
+        >
+          <VaIcon name="analytics" size="small" />
+          {{ researchCandidate.score >= 0 ? '+' : '' }}{{ researchCandidate.score.toFixed(3) }}
+        </button>
         <div class="layer-quick-stats">
           <span v-if="layer.parameters" class="param-count">{{ formatNumber(layer.parameters) }}</span>
           <span v-if="layer.numHeads" class="heads-count">{{ layer.numHeads }}H</span>
@@ -479,5 +498,27 @@ const removeModule = (moduleType, moduleIndex) => {
 .compatibility-reason {
   display: block;
   margin-top: 0.2rem;
+}
+
+.layer-card.research-candidate {
+  background: color-mix(in srgb, var(--va-primary) 5%, var(--va-background-element));
+}
+
+.layer-card.research-selected {
+  border-color: var(--va-primary);
+  box-shadow: inset 0 0 0 1px var(--va-primary);
+}
+
+.research-candidate-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--va-background-border);
+  border-radius: 2px;
+  background: var(--va-background-secondary);
+  color: var(--va-primary);
+  padding: 0.25rem 0.4rem;
+  cursor: pointer;
+  font-size: 0.7rem;
 }
 </style>

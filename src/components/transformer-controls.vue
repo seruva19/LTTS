@@ -8,7 +8,8 @@
       <div v-if="!isCollapsed"><strong>Model explorer</strong><small>Navigate and filter layers</small></div>
     </div>
     <!-- Compressed content -->
-    <div class="compressed-content">
+    <ResearchStudyPanel v-if="research.isOpen && !isCollapsed" @close="closeResearchStudy" />
+    <div v-else class="compressed-content">
       <!-- Layer Categories Section -->
       <div class="layer-categories-section">
         <div v-if="!isCollapsed" class="section-caption">Navigate</div>
@@ -239,8 +240,11 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useLttsState } from '../state'
 import { scrollToLayerIndex } from '@/composables/useLayerNavigation'
+import ResearchStudyPanel from '@/components/research-study-panel.vue'
+import { useResearchStore } from '@/state/research-store'
 
 const state = useLttsState()
+const research = useResearchStore()
 
 // Track the current layer index for index-based keyboard navigation.
 const currentLayerIndex = ref(-1)
@@ -270,6 +274,11 @@ const emitPanelSize = () => {
 }
 const toggleSidebar = () => {
   isCollapsed.value = !isCollapsed.value
+  emitPanelSize()
+}
+const closeResearchStudy = () => {
+  research.close()
+  isCollapsed.value = true
   emitPanelSize()
 }
 const startResize = (event) => {
@@ -407,6 +416,7 @@ const toggleComponent = (component) => {
 
 // Navigation presets
 const presets = ref([
+  { id: 'research-study', name: 'Research Study', icon: 'science' },
   { id: 'search', name: 'Search Layers', icon: 'search' },
   { id: 'bookmarks', name: 'Bookmarks', icon: 'bookmark' },
   { id: 'filter-modules', name: 'Filter by Modules', icon: 'filter_list' },
@@ -552,6 +562,13 @@ const jumpToOutput = () => {
 const applyPreset = (presetId) => {
 
   switch (presetId) {
+    case 'research-study':
+      research.open()
+      if (isCollapsed.value) {
+        isCollapsed.value = false
+        emitPanelSize()
+      }
+      break
     case 'search':
       toggleSearch()
       break

@@ -196,6 +196,26 @@ Two common plans are concrete rather than callback-only:
 Both return an ordinary `ResearchStudyResult`; neither depends on the UI or web
 application.
 
+## Research Study web API
+
+The additive `POST /api/research/studies/run` endpoint connects the browser UI
+to reproducible inference trials without changing `/api/inference`. A request
+contains a manifest identity, explicit examples, unique seeds, the currently
+attached module specifications, and optional study metadata. Limits are 32
+examples and 16 seeds per request.
+
+Each example/seed pair runs as an isolated normal inference with its seed in the
+run export. The service subscribes to that trial's private message-bus token,
+captures only real visualization messages, and aggregates finite numeric
+`score`, `effect`, `delta`, `attribution`, or `value` fields by layer. Results
+include every trial export, artifact provenance, mean and population standard
+deviation, and validated dataset/scan stages. Missing, textual, or non-finite
+measurements never become candidates.
+
+The aggregate is also emitted as one table artifact on the caller's original
+client token, so the existing artifact panel renders it without a second output
+system.
+
 ## Model and generation comparisons
 
 `ModelDiffer` aligns exact paths first and then unique semantic descriptors

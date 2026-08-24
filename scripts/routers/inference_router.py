@@ -1,49 +1,15 @@
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, field_validator
-
 from scripts.services.inference_service import InferenceService
+from scripts.services.inference.contracts import InferenceInput, PreflightInput
 from scripts.services.model_compatibility import (
     apply_capability_override,
     build_compatibility_report,
 )
 
 logger = logging.getLogger(__name__)
-
-# Limits to prevent resource exhaustion
-_MAX_PROMPT_LENGTH = 100_000  # characters
-_MAX_TOKENS_UPPER = 8192
-_MAX_MODULES_PER_REQUEST = 50
-
-
-class InferenceInput(BaseModel):
-    model_id: str = Field(..., min_length=1, max_length=256)
-    prompt: str = Field(..., min_length=1, max_length=_MAX_PROMPT_LENGTH)
-    max_tokens: Optional[int] = Field(None, ge=1, le=_MAX_TOKENS_UPPER)
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    client_token: Optional[str] = Field(None, max_length=128)
-    modules: Optional[Dict[str, List[Union[str, Dict[str, Any]]]]] = (
-        None  # layer_name -> module specs
-    )
-
-    @field_validator("modules")
-    @classmethod
-    def validate_modules(cls, v):
-        if v is not None:
-            total = sum(len(specs) for specs in v.values())
-            if total > _MAX_MODULES_PER_REQUEST:
-                raise ValueError(
-                    f"Too many module attachments ({total}), max is {_MAX_MODULES_PER_REQUEST}"
-                )
-        return v
-
-
-class PreflightInput(BaseModel):
-    model_id: str = Field(..., min_length=1, max_length=256)
-    modules: Optional[Dict[str, List[Union[str, Dict[str, Any]]]]] = None
-
 
 # Concurrency limiter — only N inferences at once
 import asyncio

@@ -16,6 +16,7 @@ import CategorySection from '@/components/blocks/blueprint/CategorySection.vue'
 import ContextMenu from '@/components/blocks/blueprint/ContextMenu.vue'
 import LayerCard from '@/components/blocks/blueprint/LayerCard.vue'
 import LazyMount from '@/components/blocks/blueprint/LazyMount.vue'
+import ResearchStudyContext from '@/components/blocks/blueprint/ResearchStudyContext.vue'
 
 const state = useLttsState()
 const workspace = ref(null)
@@ -308,6 +309,7 @@ onUnmounted(() => {
 <template>
   <div v-if="state.blueprints.loadedBlueprint && (state.blueprints.loadedBlueprint.layers || []).length > 0" class="layers-container" ref="workspace">
     <ModelLogPanel />
+    <ResearchStudyContext />
     <ModelInfoHeader
       :blueprint="state.blueprints.loadedBlueprint"
       :total-modules="getTotalAttachedModules()"

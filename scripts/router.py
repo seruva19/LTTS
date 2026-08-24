@@ -23,6 +23,7 @@ from scripts.routers.modules_router import create_modules_router
 from scripts.routers.blueprints_router import create_blueprints_router
 from scripts.routers.settings_router import create_settings_router
 from scripts.routers.inference_router import create_inference_router
+from scripts.routers.research_router import create_research_router
 
 logger = logging.getLogger(__name__)
 _runtime_lock = Lock()
@@ -97,6 +98,7 @@ def create_api_router() -> APIRouter:
     api.include_router(create_blueprints_router(context))
     api.include_router(create_settings_router(context))
     api.include_router(create_inference_router(context))
+    api.include_router(create_research_router(context))
 
     async def startup_event():
         asyncio.create_task(context.message_bus.start_processing())

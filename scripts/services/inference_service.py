@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import torch
+import numpy as np
 from fastapi import HTTPException
 from scripts.core.emission_controller import reset_state as reset_emission_state
 from scripts.core.module_data_sender import set_current_client_token
@@ -31,8 +34,8 @@ from scripts.services.model_compatibility import (
 )
 from scripts.services.run_export import build_run_export
 
-if TYPE_CHECKING:  # pragma: no cover - import only for typing, avoids circular dep
-    from scripts.routers.inference_router import InferenceInput
+if TYPE_CHECKING:  # pragma: no cover - import only for typing
+    from scripts.services.inference.contracts import InferenceInput
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,33 @@ def _get_model_lock(model_id: str) -> threading.Lock:
         return lock
 
 
+@contextmanager
+def _reproducible_rng(seed: int, model: Any):
+    """Seed one serialized inference and restore every caller RNG afterward."""
+
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    devices = sorted(
+        {
+            parameter.device.index
+            for parameter in model.parameters()
+            if parameter.device.type == "cuda" and parameter.device.index is not None
+        }
+    )
+    with torch.random.fork_rng(devices=devices):
+        random.seed(seed)
+        np.random.seed(seed % (2**32))
+        torch.manual_seed(seed)
+        for device in devices:
+            with torch.cuda.device(device):
+                torch.cuda.manual_seed(seed)
+        try:
+            yield
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
+
+
 class InferenceService:
     """Run inference and preserve the public service contract."""
 
@@ -73,6 +103,7 @@ class InferenceService:
         attached_module_specs: List[AttachmentSpec] = []
         ltts_model = None
         compatibility = None
+        rng_context = None
         token = input.client_token or "default"
         begin_run(token)
 
@@ -195,6 +226,17 @@ class InferenceService:
                 setattr(ltts_model, "_cancellation_check", _check_cancelled)
             except Exception as e:
                 logger.debug("Failed to set _client_token on ltts_model: %s", e)
+
+            raw_seed = (input.parameters or {}).get("seed")
+            if raw_seed is not None:
+                try:
+                    seed = int(raw_seed)
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=422, detail="seed must be an integer") from exc
+                if seed < 0 or seed > 2**32 - 1:
+                    raise HTTPException(status_code=422, detail="seed must be a uint32 value")
+                rng_context = _reproducible_rng(seed, ltts_model.original_model)
+                rng_context.__enter__()
 
             inputs, tokenizer = await asyncio.to_thread(
                 self.input_preparer.prepare_inputs,
@@ -352,6 +394,8 @@ class InferenceService:
             raise HTTPException(status_code=500, detail=f"Inference failed: {str(exc)}")
 
         finally:
+            if rng_context is not None:
+                rng_context.__exit__(None, None, None)
             set_current_client_token("default")
             end_run(token)
             if ltts_model:

@@ -6,6 +6,7 @@ import { useBlueprintStore } from './blueprint-store'
 import { useUIStore } from './ui-store'
 import { useWebSocketStore } from './socket-store'
 import { useSettingsStore } from './settings-store'
+import { useResearchStore } from './research-store'
 
 export const useLttsState = defineStore('lttsState', () => {
   const configStore = useConfigStore()
@@ -15,6 +16,7 @@ export const useLttsState = defineStore('lttsState', () => {
   const uiStore = useUIStore()
   const wsStore = useWebSocketStore();
   const settingsStore = useSettingsStore()
+  const researchStore = useResearchStore()
 
   return {
     config: configStore,
@@ -24,5 +26,6 @@ export const useLttsState = defineStore('lttsState', () => {
     ui: uiStore,
     ws: wsStore,
     settings: settingsStore,
+    research: researchStore,
   }
 })

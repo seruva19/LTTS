@@ -176,3 +176,22 @@ def test_shipped_debug_model_runs_inference_without_a_hub_download():
     payload = response.json()
     assert payload["status"] == "success"
     assert payload["model_id"] == "debug/dummy"
+
+
+def test_shipped_debug_blueprint_exposes_real_research_capabilities():
+    import json
+
+    with TestClient(ltts.app) as client:
+        response = client.post(
+            "/api/blueprint_from_model",
+            json={"id": "debug/dummy", "engine": "transformers"},
+        )
+
+    assert response.status_code == 200, response.text
+    model = json.loads(response.json()["model"])
+    categorization = model["categorization"]
+    assert categorization["architectureTopology"] == "decoder_only"
+    assert categorization["capabilities"]["hidden_states"] is True
+    block = next(layer for layer in model["layers"] if layer["name"] == "layers.0")
+    assert block["moduleRole"] == "block"
+    assert block["architectureStage"] == "decoder"

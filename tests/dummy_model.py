@@ -334,6 +334,18 @@ class DummyTransformerLayerWithMoE(nn.Module):
 def create_dummy_model_struct() -> ModelStruct:
     """Create a dummy model structure for testing with realistic transformer components"""
     root = ModelStruct(name="dummy", type="DummyModel")
+    root.architecture = "Debug decoder transformer"
+    root.architectureFamily = "debug_transformer"
+    root.architectureTopology = "decoder_only"
+    root.modelType = "causal_lm"
+    root.capabilities = {
+        "hidden_states": True,
+        "gradients": True,
+        "tokenizer_decoding": True,
+        "unembedding": True,
+        "generation": True,
+        "eager_attention": False,
+    }
 
     # Add embeddings
     embeddings = ModelStruct(name="embeddings", type="Embedding")
@@ -357,12 +369,18 @@ def create_dummy_model_struct() -> ModelStruct:
         transformer_layer.outputShape = [1, "seq_len", 768]
         transformer_layer.hasResidual = True
         transformer_layer.blockType = "decoder"
+        transformer_layer.moduleRole = "block"
+        transformer_layer.architectureStage = "decoder"
+        transformer_layer.layerIndex = i
 
         # Add attention sub-layer
         attention = ModelStruct(name=f"layers.{i}.attention", type="DummyAttention")
         attention.parameters = 1179648  # 4 * 768 * 768 (Q, K, V, O projections)
         attention.numHeads = 12
         attention.attentionType = "self-attention"
+        attention.moduleRole = "attention"
+        attention.architectureStage = "decoder"
+        attention.layerIndex = i
         attention.inputShape = [1, "seq_len", 768]
         attention.outputShape = [1, "seq_len", 768]
         transformer_layer.add_child(attention)
@@ -372,6 +390,9 @@ def create_dummy_model_struct() -> ModelStruct:
         ffn.parameters = 1179648  # 768 * 3072 + 3072 * 768
         ffn.inputShape = [1, "seq_len", 768]
         ffn.outputShape = [1, "seq_len", 768]
+        ffn.moduleRole = "mlp"
+        ffn.architectureStage = "decoder"
+        ffn.layerIndex = i
         transformer_layer.add_child(ffn)
 
         # Add layer norms

@@ -66,4 +66,27 @@ describe('createBlueprint', () => {
     expect(blueprint.architectureTopology).toBeNull()
     expect(blueprint.capabilities).toEqual(MODEL_STRUCT.capabilities)
   })
+
+  it('accepts architecture metadata nested in legacy categorization payloads', async () => {
+    post.mockResolvedValue({
+      data: {
+        model: JSON.stringify({
+          name: 'debug',
+          layers: [{ name: 'layers.0' }],
+          categorization: {
+            categories: {},
+            architectureTopology: 'decoder_only',
+            architectureFamily: 'debug_transformer',
+            capabilities: { hidden_states: true, eager_attention: false },
+          },
+        }),
+      },
+    })
+
+    const blueprint = await createBlueprint({ id: 'debug/dummy' })
+
+    expect(blueprint.architectureTopology).toBe('decoder_only')
+    expect(blueprint.architectureFamily).toBe('debug_transformer')
+    expect(blueprint.capabilities).toEqual({ hidden_states: true, eager_attention: false })
+  })
 })

@@ -244,6 +244,7 @@ const getDataTypeFromVisualization = (visualization) => {
   if (type.includes('attention') || type.includes('attn')) return 'tensor'
   if (type.includes('embedding')) return 'vector'
   if (type.includes('scalar')) return 'scalar'
+  if (type.includes('table')) return 'table'
   if (type.includes('histogram')) return 'histogram'
   return 'tensor'
 }
@@ -302,6 +303,9 @@ const extractShapeFromVisualization = (visualization) => {
   if (data.data?.shape) return data.data.shape
   if (data.layer_info?.output_shape) return data.layer_info.output_shape
   if (data.output_shape) return data.output_shape
+  if (data.type === 'table' && Array.isArray(data.rows)) {
+    return [data.rows.length, Array.isArray(data.headers) ? data.headers.length : (data.rows[0]?.length || 0)]
+  }
 
   // For 2D visualizations, infer shape from data
   if (data.data && Array.isArray(data.data)) {

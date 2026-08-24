@@ -1082,9 +1082,13 @@ export const createBlueprint = async (m) => {
   }
 
   // Preserve architecture metadata for module compatibility checks.
-  newBlueprint.architectureTopology = lttsModel.architectureTopology || null
-  newBlueprint.architectureFamily = lttsModel.architectureFamily || null
-  newBlueprint.capabilities = lttsModel.capabilities || {}
+  const categorizationMetadata = lttsModel.categorization || {}
+  newBlueprint.architectureTopology =
+    lttsModel.architectureTopology || categorizationMetadata.architectureTopology || null
+  newBlueprint.architectureFamily =
+    lttsModel.architectureFamily || categorizationMetadata.architectureFamily || null
+  newBlueprint.capabilities =
+    lttsModel.capabilities || categorizationMetadata.capabilities || {}
 
   newBlueprint.layers.forEach((l) => {
     l.id = UUID.generate()
