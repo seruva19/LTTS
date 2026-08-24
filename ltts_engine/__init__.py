@@ -29,6 +29,12 @@ from .graphs import (
     graph_from_sae_artifact,
     graph_from_token_attribution,
 )
+from .circuits import (
+    CircuitDiscoveryResult,
+    CircuitValidation,
+    CircuitValidator,
+    discover_circuit,
+)
 from .inspection import (
     ComponentComparison,
     ComponentContribution,
@@ -137,6 +143,9 @@ __all__ = [
     "CausalSweepPoint",
     "CausalSweepResult",
     "CausalStudyRunner",
+    "CircuitDiscoveryResult",
+    "CircuitValidation",
+    "CircuitValidator",
     "ComponentComparison",
     "ComponentContribution",
     "ComponentAttributionPoint",
@@ -207,6 +216,7 @@ __all__ = [
     "decompose_sae_features",
     "dataset_split_for_id",
     "discover_research_adapter",
+    "discover_circuit",
     "TrialResult",
     "graph_from_component_comparison",
     "graph_from_component_attribution",

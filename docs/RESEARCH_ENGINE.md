@@ -196,6 +196,19 @@ Two common plans are concrete rather than callback-only:
 Both return an ordinary `ResearchStudyResult`; neither depends on the UI or web
 application.
 
+### Compact circuit discovery
+
+`discover_circuit()` reduces an `AttributionGraph` to a node-limited subgraph
+connected to a chosen metric or output node. It expands backwards from that
+target, prioritizes absolute signed edge strength, preserves provenance and
+actionable `InterventionTargetRef` coordinates, and reports the estimated share
+of candidate edge mass retained.
+
+An optional validator receives the full and selected intervention-coordinate
+sets. Its measured full/circuit effects and fidelity are stored separately from
+the graph-based estimate. This keeps circuit extraction useful headlessly
+without treating attribution weights alone as causal validation.
+
 ### Portable study artifacts and comparisons
 
 `StudyArtifactRecord` is the versioned numeric observation contract shared by
