@@ -106,7 +106,7 @@ work. Paper and code links describe the underlying technique.
 - [ ] Attention-as-explanation debate (Jain & Wallace; Wiegreffe & Pinter) — [paper](https://arxiv.org/abs/1902.10186), [rebuttal](https://arxiv.org/abs/1908.04626)
 - [ ] Value Zeroing (context-mixing rather than raw attention) — [paper](https://arxiv.org/abs/2301.12971), [code](https://github.com/hmohebbi/ValueZeroing)
 - [ ] Self-attention attribution (AttAttr — attributing attention *edges*) — [paper](https://arxiv.org/abs/2004.11207), [code](https://github.com/YRdddream/attattr)
-- [ ] Attention-sink profiling & sink ablation — [StreamingLLM](https://arxiv.org/abs/2309.17453), [why the first token](https://arxiv.org/abs/2504.02732), [code](https://github.com/mit-han-lab/streaming-llm)
+- [x] Attention-sink profiling & sink ablation — [StreamingLLM](https://arxiv.org/abs/2309.17453), [why the first token](https://arxiv.org/abs/2504.02732), [code](https://github.com/mit-han-lab/streaming-llm)
 
 ### Feature attribution & saliency
 - [x] Token saliency mapping (gradient-based) — [paper](https://arxiv.org/abs/1312.6034)
@@ -158,7 +158,7 @@ work. Paper and code links describe the underlying technique.
 - [ ] Cross-model & cross-checkpoint representation alignment (Platonic) — [paper](https://arxiv.org/abs/2405.07987), [code](https://github.com/minyoungg/platonic-rep)
 - [x] Embedding-space visualization (PCA, t-SNE; UMAP planned) — [paper](https://arxiv.org/abs/1802.03426), [code](https://github.com/lmcinnes/umap)
 - [x] Anisotropy / isotropy analysis of embeddings (Ethayarajh) — [paper](https://arxiv.org/abs/1909.00512)
-- [ ] Intrinsic dimensionality & participation ratio (Ansuini et al.) — [paper](https://arxiv.org/abs/1905.12784), [code](https://github.com/ansuini/IntrinsicDimDeep)
+- [x] Intrinsic dimensionality & participation ratio (Ansuini et al.) — [paper](https://arxiv.org/abs/1905.12784), [code](https://github.com/ansuini/IntrinsicDimDeep)
 - [ ] Linear-representation-hypothesis tests (Park et al.) — [paper](https://arxiv.org/abs/2311.03658), [code](https://github.com/KihoPark/linear_rep_geometry)
 - [ ] Sparse probing (k-sparse probes for neuron-level feature localization) — [paper](https://arxiv.org/abs/2305.01610), [code](https://github.com/wesg52/sparse-probing-paper)
 - [ ] SAE latents vs. raw-activation probe baselines across data regimes — [paper](https://arxiv.org/abs/2502.16681), [code](https://github.com/JoshEngels/SAE-Probes)
@@ -178,8 +178,8 @@ work. Paper and code links describe the underlying technique.
 - [ ] Neuron superposition & feature-collision analysis — [paper](https://transformer-circuits.pub/2022/toy_model/index.html)
 - [ ] Automated neuron interpretation / captioning (Bills et al.) — [paper](https://openai.com/index/language-models-can-explain-neurons-in-language-models/), [code](https://github.com/openai/automated-interpretability)
 - [x] Neuron activation steering / clamping — [paper](https://arxiv.org/abs/2308.10248)
-- [ ] Massive activations, outlier dimensions & super weights — [massive activations](https://arxiv.org/abs/2402.17762), [super weight](https://arxiv.org/abs/2411.07191), [code](https://github.com/locuslab/massive-activations)
-- [ ] Layer-redundancy map (Block Influence, layer-skip validation) — [paper](https://arxiv.org/abs/2403.03853), [code](https://github.com/arcee-ai/PruneMe)
+- [x] Massive activations, outlier dimensions & super weights — [massive activations](https://arxiv.org/abs/2402.17762), [super weight](https://arxiv.org/abs/2411.07191), [code](https://github.com/locuslab/massive-activations)
+- [x] Layer-redundancy map (Block Influence, layer-skip validation) — [paper](https://arxiv.org/abs/2403.03853), [code](https://github.com/arcee-ai/PruneMe)
 
 ### Sparse dictionary learning (SAEs & beyond)
 - [x] Sparse feature discovery (pretrained SAEs via SAELens; training planned) — [code](https://github.com/jbloomAus/SAELens)
@@ -294,7 +294,7 @@ work. Paper and code links describe the underlying technique.
 
 ### Uncertainty, hallucination & confabulation detection
 - [ ] Semantic entropy & semantic-entropy probes — [paper](https://arxiv.org/abs/2406.15927), [origin](https://arxiv.org/abs/2302.09664), [code](https://github.com/OATML/semantic-entropy-probes)
-- [ ] Lookback Lens (contextual-hallucination detection from attention ratios) — [paper](https://arxiv.org/abs/2407.07071), [code](https://github.com/voidism/Lookback-Lens)
+- [x] Lookback Lens (contextual-hallucination detection from attention ratios) — [paper](https://arxiv.org/abs/2407.07071), [code](https://github.com/voidism/Lookback-Lens)
 - [ ] EigenScore / INSIDE (covariance-eigenvalue uncertainty from internal states) — [paper](https://arxiv.org/abs/2402.03744), [code](https://github.com/D2I-ai/eigenscore)
 
 ### Mixture-of-Experts & routing analysis
@@ -306,7 +306,7 @@ work. Paper and code links describe the underlying technique.
 - [ ] KV-cache eviction sensitivity (heavy-hitter accumulation as token importance) — [paper](https://arxiv.org/abs/2306.14048), [code](https://github.com/FMInference/H2O)
 
 ### Tokenizer, vocabulary & positional structure
-- [ ] Under-trained / glitch-token audit (tokenizer-vs-model mismatch) — [paper](https://arxiv.org/abs/2405.05417), [code](https://github.com/cohere-ai/magikarp)
+- [x] Under-trained / glitch-token audit (tokenizer-vs-model mismatch) — [paper](https://arxiv.org/abs/2405.05417), [code](https://github.com/cohere-ai/magikarp)
 - [ ] RoPE frequency-band decomposition of attention — [paper](https://arxiv.org/abs/2410.06205)
 
 ### Non-transformer & hybrid architectures
